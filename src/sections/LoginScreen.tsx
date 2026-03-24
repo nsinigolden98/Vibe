@@ -1,5 +1,6 @@
 import { useVibeStore } from '@/hooks/useVibeStore';
 import { Zap, Chrome, User } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 export default function LoginScreen() {
   const { loginWithGoogle, loginAsGuest } = useVibeStore();
@@ -66,3 +67,10 @@ export default function LoginScreen() {
     </div>
   );
 }
+
+
+const loginWithGoogle = async () => {
+  await supabase.auth.signInWithOAuth({
+    provider: 'google',
+  });
+};
