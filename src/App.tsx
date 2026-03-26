@@ -97,50 +97,5 @@ function App() {
 
 
 
-useEffect(() => {
-  const checkUser = async () => {
-    const { data } = await supabase.auth.getUser();
-
-    if (data.user) {
-      // user is logged in
-      console.log("User:", data.user);
-
-      // 👉 mark your app as authenticated
-      useVibeStore.getState().setAuthenticated(true);
-
-      // 👉 create anonymous profile
-      await createProfile(data.user);
-    }
-  };
-
-  checkUser();
-}, []);
-
-
-const generateUsername = () => {
-  return "user_" + Math.random().toString(36).substring(2, 10);
-};
-
-const createProfile = async (user: any) => {
-  const { data: existing } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single();
-
-  if (!existing) {
-    await supabase.from('profiles').insert([
-      {
-        id: user.id,
-        username: generateUsername(),
-        avatar_url: '',
-        followers_count: 0,
-        following_count: 0,
-      },
-    ]);
-  }
-};
-
-
 
 export default App;
