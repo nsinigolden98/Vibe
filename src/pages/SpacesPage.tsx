@@ -1,437 +1,344 @@
-import { useEffect, useState, useRef } from 'react';
-import { useVibeStore } from '@/hooks/useVibeStore';
-import { Users, MessageSquare, Send, Radio, Clock, ChevronLeft, Mic, MicOff, Plus, Trash2, X } from 'lucide-react';
-import { formatNumber } from '@/lib/utils';
-import mockBackend from '@/services/mockBackend';
-import type { Space, SpaceMessage } from '@/types';
+import { useState, useEffect, useRef } from 'react';
+import { Plus, MessageCircle, X, Send, Loader2 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import { formatDistanceToNow } from '../lib/utils';
 
-export default function SpacesPage() {
-  const { spaces, settings, currentUser } = useVibeStore();
-  const [activeSpace, setActiveSpace] = useState<Space | null>(null);
-  const [messageInput, setMessageInput] = useState('');
-  const [isMuted, setIsMuted] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newSpaceName, setNewSpaceName] = useState('');
-  const [newSpaceDescription, setNewSpaceDescription] = useState('');
-  const [newSpaceExpiry, setNewSpaceExpiry] = useState(1440); // 24 hours default
+interface Space {
+  id: string;
+  creator_id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  users?: {
+    username: string;
+    avatar_symbol: string;
+    avatar_gradient: string;
+  };
+}
+
+interface Message {
+  id: string;
+  space_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+  users: {
+    username: string;
+    avatar_symbol: string;
+    avatar_gradient: string;
+  };
+}
+
+export function SpacesPage() {
+  const { user } = useAuth();
+  const [spaces, setSpaces] = useState<Space[]>([]);
+  const [selectedSpace, setSelectedSpace] = useState<Space | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [spaceName, setSpaceName] = useState('');
+  const [spaceDescription, setSpaceDescription] = useState('');
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const isDark = settings.theme === 'dark';
 
-  // Subscribe to real-time updates
   useEffect(() => {
-    const handleSpaceUpdate = () => {
-      useVibeStore.getState().refreshSpaces();
-      if (activeSpace) {
-        const updated = mockBackend.getSpaceById(activeSpace.id);
-        if (updated) {
-          setActiveSpace(updated);
-        }
+    loadSpaces();
+  }, []);
+
+  useEffect(() => {
+    if (selectedSpace) {
+      loadMessages();
+      const channel = supabase
+        .channel(`space_${selectedSpace.id}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'space_messages', filter: `space_id=eq.${selectedSpace.id}` }, () => {
+          loadMessages();
+        })
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
+  }, [selectedSpace]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  async function loadSpaces() {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('spaces')
+        .select(`
+          *,
+          users (username, avatar_symbol, avatar_gradient)
+        `)
+        .gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setSpaces(data || []);
+    } catch (error) {
+      console.error('Error loading spaces:', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadMessages() {
+    if (!selectedSpace) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('space_messages')
+        .select(`
+          *,
+          users (username, avatar_symbol, avatar_gradient)
+        `)
+        .eq('space_id', selectedSpace.id)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      setMessages(data || []);
+    } catch (error) {
+      console.error('Error loading messages:', error);
+    }
+  }
+
+  async function handleCreateSpace(e: React.FormEvent) {
+    e.preventDefault();
+    if (!user || !spaceName.trim() || submitting) return;
+
+    setSubmitting(true);
+    try {
+      const expiresAt = new Date();
+      expiresAt.setHours(expiresAt.getHours() + 24);
+
+      const { data, error } = await supabase
+        .from('spaces')
+        .insert({
+          creator_id: user.id,
+          name: spaceName.trim(),
+          description: spaceDescription.trim() || null,
+          expires_at: expiresAt.toISOString(),
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setSpaceName('');
+      setSpaceDescription('');
+      setShowCreateForm(false);
+      await loadSpaces();
+
+      if (data) {
+        setSelectedSpace(data);
       }
-    };
-    mockBackend.on('spaceUpdated', handleSpaceUpdate);
-    return () => {
-      mockBackend.off('spaceUpdated', handleSpaceUpdate);
-    };
-  }, [activeSpace]);
-
-  useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    } catch (error) {
+      console.error('Error creating space:', error);
+      alert('Failed to create space. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
-  }, [activeSpace?.messages]);
+  }
 
-  const joinSpace = (space: Space) => {
-    mockBackend.joinSpace(space.id);
-    // Update current user's joined spaces
-    if (currentUser && !currentUser.joinedSpaces.includes(space.id)) {
-      currentUser.joinedSpaces.push(space.id);
+  async function handleSendMessage(e: React.FormEvent) {
+    e.preventDefault();
+    if (!user || !selectedSpace || !newMessage.trim() || submitting) return;
+
+    const messageContent = newMessage.trim();
+    setNewMessage('');
+    setSubmitting(true);
+
+    try {
+      const { data, error } = await supabase
+        .from('space_messages')
+        .insert({
+          space_id: selectedSpace.id,
+          user_id: user.id,
+          content: messageContent,
+        })
+        .select(`
+          *,
+          users (username, avatar_symbol, avatar_gradient)
+        `)
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        setMessages(prev => [...prev, data]);
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+    } finally {
+      setSubmitting(false);
     }
-    setActiveSpace(space);
-  };
+  }
 
-  const leaveSpace = () => {
-    if (activeSpace) {
-      mockBackend.leaveSpace(activeSpace.id);
-      setActiveSpace(null);
-    }
-  };
-
-  const sendMessage = () => {
-    if (activeSpace && messageInput.trim() && !isMuted) {
-      mockBackend.sendSpaceMessage(activeSpace.id, messageInput);
-      setMessageInput('');
-    }
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-
-  const handleCreateSpace = () => {
-    if (newSpaceName.trim() && newSpaceDescription.trim()) {
-      mockBackend.createSpace(newSpaceName, newSpaceDescription, newSpaceExpiry);
-      setShowCreateModal(false);
-      setNewSpaceName('');
-      setNewSpaceDescription('');
-      setNewSpaceExpiry(1440);
-      useVibeStore.getState().refreshSpaces();
-    }
-  };
-
-  const handleDeleteSpace = (spaceId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (confirm('Are you sure you want to delete this space?')) {
-      mockBackend.deleteSpace(spaceId);
-      useVibeStore.getState().refreshSpaces();
-    }
-  };
-
-  // Calculate expiry time for display
-  const getExpiryText = (space: Space) => {
-    const expiryTime = new Date(space.createdAt.getTime() + 24 * 60 * 60 * 1000);
-    const timeLeft = Math.max(0, expiryTime.getTime() - Date.now());
-    const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60));
-    if (hoursLeft < 1) return 'Expiring soon';
-    if (hoursLeft < 24) return `${hoursLeft}h left`;
-    return `${Math.floor(hoursLeft / 24)}d left`;
-  };
-
-  if (activeSpace) {
+  if (loading) {
     return (
-      <div className="min-h-screen flex flex-col">
-        {/* Space Header */}
-        <div className={`sticky top-0 z-30 ${isDark ? 'bg-[#0a0a0a]/95' : 'bg-[#f5f5f5]/95'} backdrop-blur-xl border-b ${isDark ? 'border-white/10' : 'border-gray-200'} px-4 py-4`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <button 
-                onClick={leaveSpace}
-                className={`p-2 rounded-full ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-200'}`}
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </button>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {activeSpace.name}
-                  </h1>
-                  <span className="flex items-center gap-1 px-2 py-0.5 bg-red-500/20 text-red-500 text-xs rounded-full animate-pulse">
-                    <Radio className="w-3 h-3" />
-                    LIVE
-                  </span>
-                </div>
-                <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                  {activeSpace.description}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsMuted(!isMuted)}
-                className={`p-2 rounded-full ${isMuted ? 'bg-red-500/20 text-red-500' : isDark ? 'bg-white/10' : 'bg-gray-100'}`}
-              >
-                {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-              </button>
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-[#ff2e2e]/20 rounded-full">
-                <Users className="w-4 h-4 text-[#ff2e2e]" />
-                <span className="text-sm text-[#ff2e2e] font-medium">
-                  {formatNumber(activeSpace.activeUsers)}
-                </span>
-              </div>
-            </div>
+      <div className="flex items-center justify-center h-screen">
+        <Loader2 className="w-8 h-8 animate-spin text-red-500" />
+      </div>
+    );
+  }
+
+  if (selectedSpace) {
+    return (
+      <div className="fixed inset-0 bg-white dark:bg-gray-900 flex flex-col z-40">
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white">{selectedSpace.name}</h2>
+            {selectedSpace.description && (
+              <p className="text-sm text-gray-500 dark:text-gray-400">{selectedSpace.description}</p>
+            )}
           </div>
+          <button
+            onClick={() => setSelectedSpace(null)}
+            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        {/* Messages - Scrollable */}
-        <div className={`flex-1 overflow-y-auto p-4 space-y-3 ${isDark ? 'bg-[#0a0a0a]' : 'bg-[#f5f5f5]'}`}>
-          {activeSpace.messages.length === 0 ? (
-            <div className={`text-center py-12 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-              <MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-50" />
-              <p>No messages yet. Start the conversation!</p>
-            </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {messages.length === 0 ? (
+            <p className="text-center text-gray-500 dark:text-gray-400 text-sm">No messages yet. Start the conversation!</p>
           ) : (
-            activeSpace.messages.map((message, index) => (
-              <MessageBubble 
-                key={message.id} 
-                message={message} 
-                isCurrentUser={message.author.id === currentUser?.id}
-                isDark={isDark}
-                showAvatar={index === 0 || activeSpace.messages[index - 1].author.id !== message.author.id}
-              />
+            messages.map((msg) => (
+              <div key={msg.id} className="flex items-start gap-3">
+                <div className={`w-8 h-8 bg-gradient-to-br ${msg.users.avatar_gradient} rounded-full flex items-center justify-center text-sm flex-shrink-0`}>
+                  {msg.users.avatar_symbol}
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                      {msg.users.username}
+                    </span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {formatDistanceToNow(msg.created_at)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 p-2 rounded-lg">
+                    {msg.content}
+                  </p>
+                </div>
+              </div>
             ))
           )}
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Message Input */}
-        <div className={`p-4 border-t ${isDark ? 'border-white/10 bg-[#0a0a0a]' : 'border-gray-200 bg-white'}`}>
-          {isMuted && (
-            <div className={`text-center text-xs mb-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-              You are muted. Unmute to send messages.
-            </div>
-          )}
+        <form onSubmit={handleSendMessage} className="border-t border-gray-200 dark:border-gray-800 p-4">
           <div className="flex items-center gap-2">
-            <div className={`flex-1 flex items-center gap-2 px-4 py-3 rounded-full ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
-              <input
-                type="text"
-                value={messageInput}
-                onChange={(e) => setMessageInput(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder={isMuted ? "Unmute to type..." : "Type a message..."}
-                disabled={isMuted}
-                className={`flex-1 bg-transparent outline-none ${isDark ? 'text-white placeholder-gray-500' : 'text-gray-900 placeholder-gray-400'} disabled:opacity-50`}
-              />
-            </div>
+            <input
+              type="text"
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              placeholder="Send a message..."
+              className="flex-1 px-4 py-2 bg-gray-50 dark:bg-gray-800 border-none rounded-full text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-red-500"
+            />
             <button
-              onClick={sendMessage}
-              disabled={!messageInput.trim() || isMuted}
-              className="w-12 h-12 flex items-center justify-center bg-[#ff2e2e] text-white rounded-full disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#e62929] transition-colors"
+              type="submit"
+              disabled={!newMessage.trim() || submitting}
+              className="p-2 bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Send className="w-5 h-5" />
+              {submitting ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
             </button>
           </div>
-          <p className={`text-xs text-center mt-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-            Messages disappear after 1 hour
-          </p>
-        </div>
+        </form>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen pb-20">
-      {/* Header */}
-      <div className={`sticky top-0 z-30 ${isDark ? 'bg-[#0a0a0a]/95' : 'bg-[#f5f5f5]/95'} backdrop-blur-xl border-b ${isDark ? 'border-white/10' : 'border-gray-200'} px-4 py-4`}>
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Spaces</h1>
-            <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Join live conversations</p>
-          </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-[#ff2e2e] text-white text-sm font-medium rounded-full hover:bg-[#e62929] transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Create
-          </button>
-        </div>
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 pb-24 md:pb-0">
+      <div className="sticky top-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 p-4 flex items-center justify-between z-10">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Spaces</h1>
+        <button
+          onClick={() => setShowCreateForm(true)}
+          className="p-2 bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white rounded-full transition-all"
+        >
+          <Plus className="w-5 h-5" />
+        </button>
       </div>
 
-      {/* Spaces Grid */}
-      <div className="px-4 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-4xl mx-auto">
+      {showCreateForm && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end md:items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-900 w-full md:max-w-md md:rounded-2xl rounded-t-3xl p-6">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Create a Space</h2>
+            <form onSubmit={handleCreateSpace} className="space-y-4">
+              <input
+                type="text"
+                value={spaceName}
+                onChange={(e) => setSpaceName(e.target.value)}
+                placeholder="Space name"
+                className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border-none rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-red-500"
+              />
+              <textarea
+                value={spaceDescription}
+                onChange={(e) => setSpaceDescription(e.target.value)}
+                placeholder="Description (optional)"
+                className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border-none rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-red-500 resize-none h-20"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateForm(false);
+                    setSpaceName('');
+                    setSpaceDescription('');
+                  }}
+                  className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!spaceName.trim() || submitting}
+                  className="flex-1 px-4 py-2 bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {submitting ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <div className="p-4 space-y-3 max-w-2xl mx-auto">
         {spaces.length === 0 ? (
-          <div className={`col-span-full text-center py-12 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-            <div className="w-16 h-16 rounded-full bg-[#ff2e2e]/10 flex items-center justify-center mx-auto mb-4">
-              <span className="text-3xl">🚀</span>
-            </div>
-            <p className="text-lg font-medium mb-2">No spaces available</p>
-            <p className="text-sm mb-4">Create your own space to get started!</p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-6 py-2.5 bg-[#ff2e2e] text-white font-medium rounded-full"
-            >
-              Create Space
-            </button>
+          <div className="text-center py-12">
+            <MessageCircle className="w-12 h-12 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
+            <p className="text-gray-500 dark:text-gray-400">No spaces yet. Create one to get started!</p>
           </div>
         ) : (
           spaces.map((space) => (
-            <div 
+            <button
               key={space.id}
-              onClick={() => joinSpace(space)}
-              className={`p-5 rounded-2xl ${isDark ? 'bg-white/5' : 'bg-white'} border ${isDark ? 'border-white/10' : 'border-gray-200'} cursor-pointer hover:scale-[1.02] transition-transform group relative`}
+              onClick={() => setSelectedSpace(space)}
+              className="w-full p-4 bg-white dark:bg-gray-800 rounded-xl hover:shadow-lg transition-all text-left border border-gray-200 dark:border-gray-700"
             >
-              {/* Delete button (only for creator) */}
-              {currentUser && space.creatorId === currentUser.id && (
-                <button
-                  onClick={(e) => handleDeleteSpace(space.id, e)}
-                  className={`absolute top-3 right-3 p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
-                >
-                  <Trash2 className="w-4 h-4 text-red-500" />
-                </button>
+              <h3 className="font-bold text-gray-900 dark:text-white mb-1">{space.name}</h3>
+              {space.description && (
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">{space.description}</p>
               )}
-
-              <div className="flex items-start justify-between mb-4">
-                <div className={`w-14 h-14 rounded-xl bg-gradient-to-br from-[#ff2e2e] to-[#b91c1c] flex items-center justify-center group-hover:shadow-lg group-hover:shadow-[#ff2e2e]/20 transition-shadow`}>
-                  <MessageSquare className="w-7 h-7 text-white" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center gap-1 px-2 py-1 bg-red-500/20 text-red-500 text-xs rounded-full animate-pulse">
-                    <Radio className="w-3 h-3" />
-                    LIVE
-                  </span>
-                </div>
-              </div>
-              
-              <h3 className={`font-bold text-lg mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                {space.name}
-              </h3>
-              <p className={`text-sm mb-4 line-clamp-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                {space.description}
+              <p className="text-xs text-gray-500 dark:text-gray-500">
+                {formatDistanceToNow(space.created_at)}
               </p>
-              
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="flex -space-x-2">
-                    {[...Array(3)].map((_, i) => (
-                      <div 
-                        key={i}
-                        className={`w-7 h-7 rounded-full bg-gradient-to-br from-blue-${400 + i * 100} to-purple-${400 + i * 100} border-2 ${isDark ? 'border-[#0a0a0a]' : 'border-white'} flex items-center justify-center`}
-                      >
-                        <span className="text-white text-[8px] font-bold">
-                          {String.fromCharCode(65 + i)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  <span className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                    {formatNumber(space.activeUsers)} active
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 text-gray-500">
-                  <Clock className="w-3 h-3" />
-                  <span className="text-xs">{getExpiryText(space)}</span>
-                </div>
-              </div>
-            </div>
+            </button>
           ))
         )}
-      </div>
-
-      {/* Create Space Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowCreateModal(false)} />
-          <div className={`relative w-full max-w-md ${isDark ? 'bg-[#1a1a1a]' : 'bg-white'} rounded-3xl p-6 scale-in`}>
-            <div className="flex items-center justify-between mb-6">
-              <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                Create Space
-              </h3>
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className={`p-2 rounded-full ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                  Space Name
-                </label>
-                <input
-                  type="text"
-                  value={newSpaceName}
-                  onChange={(e) => setNewSpaceName(e.target.value)}
-                  placeholder="e.g., Late Night Thoughts"
-                  className={`w-full p-3 rounded-xl outline-none ${
-                    isDark 
-                      ? 'bg-white/10 text-white placeholder-gray-500' 
-                      : 'bg-gray-100 text-gray-900 placeholder-gray-400'
-                  }`}
-                />
-              </div>
-
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                  Description
-                </label>
-                <textarea
-                  value={newSpaceDescription}
-                  onChange={(e) => setNewSpaceDescription(e.target.value)}
-                  placeholder="What's this space about?"
-                  rows={3}
-                  className={`w-full p-3 rounded-xl resize-none outline-none ${
-                    isDark 
-                      ? 'bg-white/10 text-white placeholder-gray-500' 
-                      : 'bg-gray-100 text-gray-900 placeholder-gray-400'
-                  }`}
-                />
-              </div>
-
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                  Expires In
-                </label>
-                <div className="flex gap-2">
-                  {[
-                    { label: '1h', value: 60 },
-                    { label: '6h', value: 360 },
-                    { label: '12h', value: 720 },
-                    { label: '24h', value: 1440 },
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => setNewSpaceExpiry(option.value)}
-                      className={`flex-1 py-2 px-3 rounded-xl text-sm font-medium transition-all ${
-                        newSpaceExpiry === option.value 
-                          ? 'bg-[#ff2e2e] text-white' 
-                          : isDark ? 'bg-white/10 text-gray-300 hover:bg-white/20' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <button
-                onClick={handleCreateSpace}
-                disabled={!newSpaceName.trim() || !newSpaceDescription.trim()}
-                className="w-full py-3.5 bg-[#ff2e2e] text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#e62929] transition-colors mt-4"
-              >
-                Create Space
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-interface MessageBubbleProps {
-  message: SpaceMessage;
-  isCurrentUser: boolean;
-  isDark: boolean;
-  showAvatar: boolean;
-}
-
-function MessageBubble({ message, isCurrentUser, isDark, showAvatar }: MessageBubbleProps) {
-  const timeLeft = Math.max(0, message.expiresAt.getTime() - Date.now());
-  const minutesLeft = Math.floor(timeLeft / 60000);
-
-  return (
-    <div className={`flex items-end gap-2 ${isCurrentUser ? 'flex-row-reverse' : ''}`}>
-      {showAvatar && !isCurrentUser ? (
-        <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${message.author.avatar.gradient} flex items-center justify-center flex-shrink-0`}>
-          <span className="text-white text-xs font-bold">{message.author.avatar.initial}</span>
-        </div>
-      ) : !isCurrentUser && (
-        <div className="w-8 flex-shrink-0" />
-      )}
-      
-      <div className={`max-w-[70%] ${isCurrentUser ? 'items-end' : 'items-start'}`}>
-        {showAvatar && !isCurrentUser && (
-          <p className={`text-xs mb-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-            {message.author.username}
-          </p>
-        )}
-        <div className={`px-4 py-2.5 rounded-2xl ${
-          isCurrentUser 
-            ? 'bg-[#ff2e2e] text-white rounded-br-md' 
-            : isDark ? 'bg-white/10 text-white rounded-bl-md' : 'bg-gray-200 text-gray-900 rounded-bl-md'
-        }`}>
-          <p>{message.content}</p>
-        </div>
-        <div className={`flex items-center gap-1 mt-1 ${isCurrentUser ? 'justify-end' : ''}`}>
-          <Clock className="w-3 h-3 text-gray-500" />
-          <span className="text-xs text-gray-500">
-            {minutesLeft > 0 ? `${minutesLeft}m left` : 'Expiring soon'}
-          </span>
-        </div>
       </div>
     </div>
   );

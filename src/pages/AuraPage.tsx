@@ -1,343 +1,269 @@
 import { useState, useEffect } from 'react';
-import { useVibeStore } from '@/hooks/useVibeStore';
-import { Users, UserPlus, MessageSquare, BarChart3, Radio, FileText, Heart, Share2, Eye } from 'lucide-react';
-import { formatNumber, formatTimeAgo } from '@/lib/utils';
-import { MOOD_CONFIG } from '@/types';
-import mockBackend from '@/services/mockBackend';
-import type { Drop, Pulse, Aura } from '@/types';
+import { Users, Heart, MessageCircle, Loader2, X } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import { formatDistanceToNow } from '../lib/utils';
+import { FullPostView } from '../components/drops/FullPostView';
 
-type TabType = 'drops' | 'pulses' | 'spaces' | 'vibing' | 'vibers';
+interface Drop {
+  id: string;
+  user_id: string;
+  content: string;
+  image_url: string | null;
+  mood: string | null;
+  created_at: string;
+  users: {
+    username: string;
+    avatar_symbol: string;
+    avatar_gradient: string;
+  };
+}
 
-export default function AuraPage() {
-  const { currentUser, settings, toggleVibe, isVibing, openDropDetail } = useVibeStore();
-  const [activeTab, setActiveTab] = useState<TabType>('drops');
-  const [userDrops, setUserDrops] = useState<Drop[]>([]);
-  const [userPulses, setUserPulses] = useState<Pulse[]>([]);
-  const [vibing, setVibing] = useState<Aura[]>([]);
-  const [vibers, setVibers] = useState<Aura[]>([]);
-  const isDark = settings.theme === 'dark';
+interface Pulse {
+  id: string;
+  question: string;
+  options: Array<{ text: string }>;
+  created_at: string;
+}
+
+export function AuraPage() {
+  const { user, profile } = useAuth();
+  const [activeTab, setActiveTab] = useState<'drops' | 'pulses' | 'vibing' | 'vibers'>('drops');
+  const [drops, setDrops] = useState<Drop[]>([]);
+  const [pulses, setPulses] = useState<Pulse[]>([]);
+  const [vibing, setVibing] = useState<any[]>([]);
+  const [vibers, setVibers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedDropId, setSelectedDropId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (currentUser) {
-      setUserDrops(mockBackend.getUserDrops(currentUser.id));
-      setUserPulses(mockBackend.getUserPulses(currentUser.id));
-      setVibing(mockBackend.getVibing());
-      setVibers(mockBackend.getVibers());
+    if (!user) return;
+
+    if (activeTab === 'drops') loadDrops();
+    else if (activeTab === 'pulses') loadPulses();
+    else if (activeTab === 'vibing') loadVibing();
+    else if (activeTab === 'vibers') loadVibers();
+  }, [activeTab, user]);
+
+  async function loadDrops() {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('drops')
+        .select(`
+          *,
+          users (username, avatar_symbol, avatar_gradient)
+        `)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setDrops(data || []);
+    } catch (error) {
+      console.error('Error loading drops:', error);
+    } finally {
+      setLoading(false);
     }
-  }, [currentUser]);
+  }
 
-  // Refresh data periodically
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (currentUser) {
-        setUserDrops(mockBackend.getUserDrops(currentUser.id));
-        setUserPulses(mockBackend.getUserPulses(currentUser.id));
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [currentUser]);
+  async function loadPulses() {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('pulses')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
 
-  if (!currentUser) {
+      if (error) throw error;
+      setPulses(data || []);
+    } catch (error) {
+      console.error('Error loading pulses:', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadVibing() {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('vibes')
+        .select(`
+          following_id,
+          users:following_id (id, username, avatar_symbol, avatar_gradient)
+        `)
+        .eq('follower_id', user.id);
+
+      if (error) throw error;
+      setVibing(data || []);
+    } catch (error) {
+      console.error('Error loading vibing:', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadVibers() {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('vibes')
+        .select(`
+          follower_id,
+          users:follower_id (id, username, avatar_symbol, avatar_gradient)
+        `)
+        .eq('following_id', user.id);
+
+      if (error) throw error;
+      setVibers(data || []);
+    } catch (error) {
+      console.error('Error loading vibers:', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (selectedDropId) {
     return (
-      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-[#0a0a0a]' : 'bg-[#f5f5f5]'}`}>
-        <p className="text-gray-500">Please log in to view your Aura</p>
-      </div>
+      <FullPostView
+        dropId={selectedDropId}
+        onClose={() => setSelectedDropId(null)}
+        onRefresh={() => loadDrops()}
+      />
     );
   }
 
-  const tabs: { id: TabType; label: string; icon: typeof FileText; count: number }[] = [
-    { id: 'drops', label: 'Drops', icon: FileText, count: userDrops.length },
-    { id: 'pulses', label: 'Pulses', icon: BarChart3, count: userPulses.length },
-    { id: 'spaces', label: 'Spaces', icon: Radio, count: currentUser.joinedSpaces.length },
-    { id: 'vibing', label: 'Vibing', icon: UserPlus, count: currentUser.vibingCount },
-    { id: 'vibers', label: 'Vibers', icon: Users, count: currentUser.vibeCount },
-  ];
-
   return (
-    <div className="min-h-screen">
-      {/* Profile Header with Banner */}
-      <div className="relative">
-        {/* Banner */}
-        <div className={`h-40 bg-gradient-to-r ${currentUser.banner || 'from-[#ff2e2e] via-[#ff6b6b] to-[#b91c1c]'}`} />
-        
-        {/* Avatar & Info - Centered */}
-        <div className="px-4 -mt-16">
-          <div className="flex flex-col items-center">
-            <div className={`w-32 h-32 rounded-2xl bg-gradient-to-br ${currentUser.avatar.gradient} flex items-center justify-center border-4 ${isDark ? 'border-[#0a0a0a]' : 'border-[#f5f5f5]'} shadow-xl`}>
-              <span className="text-white text-4xl font-bold">{currentUser.avatar.initial}</span>
-            </div>
-            
-            <div className="mt-4 text-center">
-              <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                {currentUser.username}
-              </h1>
-              <div className="flex items-center justify-center gap-6 mt-3">
-                <div className="text-center">
-                  <p className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {formatNumber(currentUser.vibeCount)}
-                  </p>
-                  <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Vibers</p>
-                </div>
-                <div className="w-px h-8 bg-gray-500/30" />
-                <div className="text-center">
-                  <p className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {formatNumber(currentUser.vibingCount)}
-                  </p>
-                  <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Vibing</p>
-                </div>
-                <div className="w-px h-8 bg-gray-500/30" />
-                <div className="text-center">
-                  <p className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {formatNumber(userDrops.length)}
-                  </p>
-                  <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Drops</p>
-                </div>
-              </div>
-            </div>
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 pb-24 md:pb-0">
+      <div className="bg-gradient-to-r from-red-500 to-pink-500 h-32 md:h-48 relative">
+        <div className="absolute -bottom-12 left-4 md:left-8">
+          <div className={`w-24 h-24 md:w-32 md:h-32 bg-gradient-to-br ${profile?.avatar_gradient} rounded-full flex items-center justify-center text-5xl md:text-6xl shadow-lg border-4 border-white dark:border-gray-900`}>
+            {profile?.avatar_symbol}
           </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className={`sticky top-0 z-30 mt-6 ${isDark ? 'bg-[#0a0a0a]/95' : 'bg-[#f5f5f5]/95'} backdrop-blur-xl border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-        <div className="flex overflow-x-auto hide-scrollbar px-4">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-3 whitespace-nowrap border-b-2 transition-colors ${
-                  isActive 
-                    ? 'border-[#ff2e2e] text-[#ff2e2e]' 
-                    : `border-transparent ${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'}`
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                <span className="font-medium">{tab.label}</span>
-                <span className={`text-xs px-1.5 py-0.5 rounded-full ${isDark ? 'bg-white/10' : 'bg-gray-200'}`}>
-                  {tab.count}
-                </span>
-              </button>
-            );
-          })}
+      <div className="px-4 md:px-8 mt-16 md:mt-20 mb-8">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{profile?.username}</h1>
+        <p className="text-gray-600 dark:text-gray-400">Anonymous Viber</p>
+      </div>
+
+      <div className="sticky top-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 z-10">
+        <div className="flex items-center gap-1 max-w-4xl mx-auto px-4">
+          {(['drops', 'pulses', 'vibing', 'vibers'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 px-4 py-3 font-medium capitalize border-b-2 transition-colors ${
+                activeTab === tab
+                  ? 'border-red-500 text-red-500'
+                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Tab Content */}
-      <div className="px-4 py-4 max-w-2xl mx-auto">
-        {activeTab === 'drops' && (
-          <div className="space-y-4">
-            {userDrops.length === 0 ? (
-              <EmptyState 
-                message="No drops yet" 
-                subMessage="Create your first drop to see it here" 
-                isDark={isDark} 
-                icon="📝"
-              />
+      <div className="max-w-4xl mx-auto">
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-red-500" />
+          </div>
+        ) : activeTab === 'drops' ? (
+          <div className="p-4 space-y-4">
+            {drops.length === 0 ? (
+              <p className="text-center text-gray-500 dark:text-gray-400 py-8">No drops yet</p>
             ) : (
-              userDrops.map((drop) => (
-                <DropCard 
-                  key={drop.id} 
-                  drop={drop} 
-                  isDark={isDark} 
-                  onClick={() => openDropDetail(drop)}
-                />
+              drops.map((drop) => (
+                <button
+                  key={drop.id}
+                  onClick={() => setSelectedDropId(drop.id)}
+                  className="w-full p-4 bg-white dark:bg-gray-800 rounded-xl hover:shadow-lg transition-all text-left border border-gray-200 dark:border-gray-700"
+                >
+                  {drop.content && <p className="text-gray-900 dark:text-white mb-2">{drop.content}</p>}
+                  {drop.image_url && (
+                    <img
+                      src={drop.image_url}
+                      alt="Drop"
+                      className="w-full h-48 object-cover rounded-lg mb-2"
+                    />
+                  )}
+                  <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+                    <span>{formatDistanceToNow(drop.created_at)}</span>
+                    {drop.mood && <span className="px-2 py-1 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded text-xs">{drop.mood}</span>}
+                  </div>
+                </button>
               ))
             )}
           </div>
-        )}
-
-        {activeTab === 'pulses' && (
-          <div className="space-y-4">
-            {userPulses.length === 0 ? (
-              <EmptyState 
-                message="No pulses yet" 
-                subMessage="Create a pulse to see it here" 
-                isDark={isDark}
-                icon="📊"
-              />
+        ) : activeTab === 'pulses' ? (
+          <div className="p-4 space-y-4">
+            {pulses.length === 0 ? (
+              <p className="text-center text-gray-500 dark:text-gray-400 py-8">No pulses yet</p>
             ) : (
-              userPulses.map((pulse) => (
-                <PulseCard key={pulse.id} pulse={pulse} isDark={isDark} />
+              pulses.map((pulse) => (
+                <div
+                  key={pulse.id}
+                  className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700"
+                >
+                  <h3 className="font-semibold text-gray-900 dark:text-white mb-2">{pulse.question}</h3>
+                  <div className="space-y-2 mb-2">
+                    {pulse.options.map((option, idx) => (
+                      <div key={idx} className="px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded text-sm text-gray-700 dark:text-gray-300">
+                        {option.text}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{formatDistanceToNow(pulse.created_at)}</p>
+                </div>
               ))
             )}
           </div>
-        )}
-
-        {activeTab === 'spaces' && (
-          <EmptyState 
-            message="No spaces joined" 
-            subMessage="Join a space to see it here" 
-            isDark={isDark}
-            icon="🚀"
-          />
-        )}
-
-        {activeTab === 'vibing' && (
-          <div className="space-y-3">
+        ) : activeTab === 'vibing' ? (
+          <div className="p-4 space-y-3">
             {vibing.length === 0 ? (
-              <EmptyState 
-                message="Not vibing with anyone" 
-                subMessage="Vibe with others to see them here" 
-                isDark={isDark}
-                icon="💫"
-              />
+              <p className="text-center text-gray-500 dark:text-gray-400 py-8">Not vibing with anyone yet</p>
             ) : (
-              vibing.map((aura) => (
-                <AuraCard 
-                  key={aura.id} 
-                  aura={aura} 
-                  isDark={isDark} 
-                  isVibing={isVibing(aura.id)}
-                  onToggleVibe={() => toggleVibe(aura.id)}
-                />
+              vibing.map((item) => (
+                <div key={item.following_id} className="flex items-center gap-3 p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+                  <div className={`w-12 h-12 bg-gradient-to-br ${item.users?.[0]?.avatar_gradient} rounded-full flex items-center justify-center text-xl flex-shrink-0`}>
+                    {item.users?.[0]?.avatar_symbol}
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-semibold text-gray-900 dark:text-white">{item.users?.[0]?.username}</p>
+                  </div>
+                  <Users className="w-5 h-5 text-gray-400" />
+                </div>
               ))
             )}
           </div>
-        )}
-
-        {activeTab === 'vibers' && (
-          <div className="space-y-3">
+        ) : (
+          <div className="p-4 space-y-3">
             {vibers.length === 0 ? (
-              <EmptyState 
-                message="No vibers yet" 
-                subMessage="People who vibe with you will appear here" 
-                isDark={isDark}
-                icon="⭐"
-              />
+              <p className="text-center text-gray-500 dark:text-gray-400 py-8">No vibers yet</p>
             ) : (
-              vibers.map((aura) => (
-                <AuraCard 
-                  key={aura.id} 
-                  aura={aura} 
-                  isDark={isDark}
-                  isVibing={isVibing(aura.id)}
-                  onToggleVibe={() => toggleVibe(aura.id)}
-                />
+              vibers.map((item) => (
+                <div key={item.follower_id} className="flex items-center gap-3 p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+                  <div className={`w-12 h-12 bg-gradient-to-br ${item.users?.[0]?.avatar_gradient} rounded-full flex items-center justify-center text-xl flex-shrink-0`}>
+                    {item.users?.[0]?.avatar_symbol}
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-semibold text-gray-900 dark:text-white">{item.users?.[0]?.username}</p>
+                  </div>
+                  <Users className="w-5 h-5 text-red-500" />
+                </div>
               ))
             )}
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function EmptyState({ message, subMessage, isDark, icon }: { message: string; subMessage: string; isDark: boolean; icon: string }) {
-  return (
-    <div className="text-center py-12">
-      <div className={`w-20 h-20 rounded-full ${isDark ? 'bg-white/10' : 'bg-gray-200'} flex items-center justify-center mx-auto mb-4`}>
-        <span className="text-3xl">{icon}</span>
-      </div>
-      <p className={`font-medium text-lg ${isDark ? 'text-white' : 'text-gray-900'}`}>{message}</p>
-      <p className={`text-sm mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>{subMessage}</p>
-    </div>
-  );
-}
-
-function DropCard({ drop, isDark, onClick }: { drop: Drop; isDark: boolean; onClick: () => void }) {
-  const mood = MOOD_CONFIG[drop.mood];
-  
-  return (
-    <div 
-      onClick={onClick}
-      className={`p-4 rounded-2xl ${isDark ? 'bg-white/5' : 'bg-white'} border ${isDark ? 'border-white/10' : 'border-gray-200'} cursor-pointer hover:scale-[1.01] transition-transform`}
-    >
-      <div className="flex items-center gap-2 mb-2">
-        <span 
-          className="text-xs px-2 py-0.5 rounded-full"
-          style={{ backgroundColor: `${mood.color}20`, color: mood.color }}
-        >
-          {mood.emoji} {mood.label}
-        </span>
-        <span className="text-xs text-gray-500">{formatTimeAgo(drop.createdAt)}</span>
-        <span className={`text-xs px-2 py-0.5 rounded-full ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
-          {drop.category}
-        </span>
-      </div>
-      <p className={`mb-3 line-clamp-3 ${isDark ? 'text-gray-200' : 'text-gray-700'}`}>{drop.content}</p>
-      {drop.imageUrl && (
-        <div className="mb-3 rounded-xl overflow-hidden">
-          <img src={drop.imageUrl} alt="Drop content" className="w-full h-auto max-h-60 object-cover" />
-        </div>
-      )}
-      <div className="flex items-center gap-4 text-gray-500">
-        <div className="flex items-center gap-1">
-          <Heart className="w-4 h-4" fill={drop.hasFelt ? '#ff2e2e' : 'none'} />
-          <span className="text-sm">{formatNumber(drop.feelCount)}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <MessageSquare className="w-4 h-4" />
-          <span className="text-sm">{formatNumber(drop.echoCount)}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Share2 className="w-4 h-4" />
-          <span className="text-sm">{formatNumber(drop.flowCount)}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Eye className="w-4 h-4" />
-          <span className="text-sm">{formatNumber(drop.seenCount)}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PulseCard({ pulse, isDark }: { pulse: Pulse; isDark: boolean }) {
-  return (
-    <div className={`p-4 rounded-2xl ${isDark ? 'bg-white/5' : 'bg-white'} border ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-      <div className="flex items-center gap-2 mb-2">
-        <BarChart3 className="w-4 h-4 text-[#ff2e2e]" />
-        <span className="text-xs text-gray-500">{formatTimeAgo(pulse.createdAt)}</span>
-      </div>
-      <p className={`font-medium mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>{pulse.question}</p>
-      <div className="space-y-2">
-        {pulse.options.map((option) => (
-          <div key={option.id} className={`p-2 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-100'}`}>
-            <div className="flex items-center justify-between">
-              <span className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{option.text}</span>
-              <span className="text-sm font-medium">{option.percentage}%</span>
-            </div>
-            <div className={`h-1.5 rounded-full mt-1 ${isDark ? 'bg-white/10' : 'bg-gray-200'}`}>
-              <div 
-                className="h-full bg-[#ff2e2e] rounded-full transition-all"
-                style={{ width: `${option.percentage}%` }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-      <p className={`text-xs mt-3 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-        {formatNumber(pulse.totalVotes)} votes
-      </p>
-    </div>
-  );
-}
-
-function AuraCard({ aura, isDark, isVibing, onToggleVibe }: { aura: Aura; isDark: boolean; isVibing: boolean; onToggleVibe: () => void }) {
-  return (
-    <div className={`flex items-center justify-between p-3 rounded-xl ${isDark ? 'bg-white/5' : 'bg-white'} border ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-      <div className="flex items-center gap-3">
-        <div className={`w-12 h-12 rounded-full bg-gradient-to-br ${aura.avatar.gradient} flex items-center justify-center`}>
-          <span className="text-white font-bold">{aura.avatar.initial}</span>
-        </div>
-        <div>
-          <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{aura.username}</p>
-          <p className="text-xs text-gray-500">{formatNumber(aura.vibeCount)} Vibers</p>
-        </div>
-      </div>
-      <button 
-        onClick={onToggleVibe}
-        className={`px-4 py-2 text-sm font-medium rounded-full transition-colors ${
-          isVibing 
-            ? 'bg-[#ff2e2e]/20 text-[#ff2e2e]' 
-            : 'bg-[#ff2e2e] text-white hover:bg-[#e62929]'
-        }`}
-      >
-        {isVibing ? 'Vibing' : 'Vibe'}
-      </button>
     </div>
   );
 }

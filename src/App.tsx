@@ -1,101 +1,71 @@
-import { useEffect, useState } from 'react';
-import { useVibeStore } from '@/hooks/useVibeStore';
-import SplashScreen from '@/sections/SplashScreen';
-import LoginScreen from '@/sections/LoginScreen';
-import UnifiedLayout from '@/layouts/UnifiedLayout';
-import DropCreator from '@/components/DropCreator';
-import DropDetailModal from '@/components/DropDetailModal';
-import TermsModal from '@/components/TermsModal';
-import PrivacyModal from '@/components/PrivacyModal';
-import IdentityModal from '@/components/IdentityModal';
-import TermsPage from '@/pages/TermsPage';
-import PrivacyPage from '@/pages/PrivacyPage';
-import './App.css';
-import { supabase } from '@/lib/supabase';
+import { useState, useEffect } from 'react';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { NavigationProvider } from './contexts/NavigationContext';
+import { LoginScreen } from './components/auth/LoginScreen';
+import { TermsModal } from './components/auth/TermsModal';
+import { MainLayout } from './components/layout/MainLayout';
+import { StreamPage } from './pages/StreamPage';
+import { PulsePage } from './pages/PulsePage';
+import { SpacesPage } from './pages/SpacesPage';
+import { AuraPage } from './pages/AuraPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { supabase } from './lib/supabase';
 
+type Page = 'stream' | 'pulse' | 'spaces' | 'aura' | 'settings';
 
-function App() {
-  const { 
-    isAuthenticated, 
-    settings, 
-    showTermsModal, 
-    showPrivacyModal, 
-    showIdentityModal,
-    isDropDetailOpen,
-  } = useVibeStore();
-  const [showSplash, setShowSplash] = useState(true);
-  const [showLogin, setShowLogin] = useState(false);
-  const [currentPage, setCurrentPage] = useState<'main' | 'terms' | 'privacy'>('main');
-  const [isMobile, setIsMobile] = useState(false);
+function AppContent() {
+  const { user, profile, loading } = useAuth();
+  const [currentPage, setCurrentPage] = useState<Page>('stream');
+  const [showTermsModal, setShowTermsModal] = useState(false);
 
   useEffect(() => {
-    // Check if mobile
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
-
-  useEffect(() => {
-    // Apply theme
-    document.documentElement.classList.toggle('dark', settings.theme === 'dark');
-  }, [settings.theme]);
-
-  useEffect(() => {
-    // Splash screen timer
-    if (isMobile && !isAuthenticated) {
-      const timer = setTimeout(() => {
-        setShowSplash(false);
-        setShowLogin(true);
-      }, 2500);
-      return () => clearTimeout(timer);
-    } else if (!isMobile && !isAuthenticated) {
-      setShowSplash(false);
-      setShowLogin(true);
+    if (user && profile && !localStorage.getItem('termsAccepted')) {
+      setShowTermsModal(true);
     }
-  }, [isMobile, isAuthenticated]);
+  }, [user, profile]);
 
-  // Navigation handler for legal pages
-  const navigateTo = (page: 'main' | 'terms' | 'privacy') => {
-    setCurrentPage(page);
-  };
-
-  // Render legal pages
-  if (currentPage === 'terms') {
-    return <TermsPage onBack={() => navigateTo('main')} />;
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
+        <div className="animate-spin">
+          <div className="w-12 h-12 border-4 border-gray-300 dark:border-gray-700 border-t-red-500 rounded-full"></div>
+        </div>
+      </div>
+    );
   }
 
-  if (currentPage === 'privacy') {
-    return <PrivacyPage onBack={() => navigateTo('main')} />;
+  if (!user || !profile) {
+    return <LoginScreen onComplete={() => {}} />;
   }
 
-  // Render authentication flow
-  if (!isAuthenticated) {
-    if (isMobile && showSplash) {
-      return <SplashScreen />;
-    }
-    if (showLogin) {
-      return <LoginScreen />;
-    }
+  if (showTermsModal) {
+    return (
+      <TermsModal
+        onAccept={() => {
+          localStorage.setItem('termsAccepted', 'true');
+          setShowTermsModal(false);
+        }}
+      />
+    );
   }
 
-  // Render main app
   return (
-    <div className={`min-h-screen ${settings.theme === 'dark' ? 'bg-[#0a0a0a] text-white' : 'bg-[#f5f5f5] text-gray-900'}`}>
-      <UnifiedLayout onNavigate={navigateTo} />
-      <DropCreator />
-      {isDropDetailOpen && <DropDetailModal />}
-      {showTermsModal && <TermsModal />}
-      {showPrivacyModal && <PrivacyModal />}
-      {showIdentityModal && <IdentityModal />}
-    </div>
+    <MainLayout currentPage={currentPage} onPageChange={setCurrentPage}>
+      {currentPage === 'stream' && <StreamPage />}
+      {currentPage === 'pulse' && <PulsePage />}
+      {currentPage === 'spaces' && <SpacesPage />}
+      {currentPage === 'aura' && <AuraPage />}
+      {currentPage === 'settings' && <SettingsPage />}
+    </MainLayout>
   );
 }
 
-
-
-
-
-export default App;
+export default function App() {
+  return (
+    <AuthProvider>
+      <NavigationProvider>
+        <AppContent />
+      </NavigationProvider>
+    </AuthProvider>
+  );
+}
