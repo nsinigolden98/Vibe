@@ -9,9 +9,11 @@ import { PulsePage } from './pages/PulsePage';
 import { SpacesPage } from './pages/SpacesPage';
 import { AuraPage } from './pages/AuraPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { DiscoverPage } from './pages/DiscoverPage';
 import { supabase } from './lib/supabase';
+import { soundManager } from './lib/soundManager';
 
-type Page = 'stream' | 'pulse' | 'spaces' | 'aura' | 'settings';
+type Page = 'stream' | 'pulse' | 'spaces' | 'aura' | 'settings' | 'discover';
 
 function AppContent() {
   const { user, profile, loading } = useAuth();
@@ -23,6 +25,21 @@ function AppContent() {
       setShowTermsModal(true);
     }
   }, [user, profile]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // Handle escape key globally
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handlePageChange = (page: Page) => {
+    soundManager.playNavigation();
+    setCurrentPage(page);
+  };
 
   if (loading) {
     return (
@@ -50,10 +67,11 @@ function AppContent() {
   }
 
   return (
-    <MainLayout currentPage={currentPage} onPageChange={setCurrentPage}>
+    <MainLayout currentPage={currentPage} onPageChange={handlePageChange}>
       {currentPage === 'stream' && <StreamPage />}
       {currentPage === 'pulse' && <PulsePage />}
       {currentPage === 'spaces' && <SpacesPage />}
+      {currentPage === 'discover' && <DiscoverPage />}
       {currentPage === 'aura' && <AuraPage />}
       {currentPage === 'settings' && <SettingsPage />}
     </MainLayout>

@@ -387,3 +387,205 @@ CREATE POLICY "Users can delete own messages"
 
 CREATE INDEX IF NOT EXISTS idx_space_messages_space_id ON space_messages(space_id);
 CREATE INDEX IF NOT EXISTS idx_space_messages_created_at ON space_messages(created_at DESC);
+
+-- Add new columns to existing tables
+ALTER TABLE drops ADD COLUMN IF NOT EXISTS video_url text;
+ALTER TABLE drops ADD COLUMN IF NOT EXISTS pinned boolean DEFAULT false;
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS xp integer DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS level integer DEFAULT 1;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS streak integer DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active timestamptz;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS premium boolean DEFAULT false;
+
+ALTER TABLE spaces ADD COLUMN IF NOT EXISTS is_private boolean DEFAULT false;
+
+-- Create user_interactions table
+CREATE TABLE IF NOT EXISTS user_interactions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  post_id uuid NOT NULL,
+  type text NOT NULL CHECK (type IN ('view', 'like', 'click', 'share', 'comment', 'vote')),
+  metadata jsonb DEFAULT '{}',
+  created_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE user_interactions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own interactions"
+ON user_interactions FOR SELECT
+TO authenticated
+USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own interactions"
+ON user_interactions FOR INSERT
+TO authenticated
+WITH CHECK (auth.uid() = user_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_interactions_user_id ON user_interactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_interactions_post_id ON user_interactions(post_id);
+CREATE INDEX IF NOT EXISTS idx_user_interactions_type ON user_interactions(type);
+
+-- Create user_preferences table
+CREATE TABLE IF NOT EXISTS user_preferences (
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  liked_topics jsonb DEFAULT '{}',
+  interaction_score jsonb DEFAULT '{}',
+  updated_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own preferences"
+ON user_preferences FOR SELECT
+TO authenticated
+USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own preferences"
+ON user_preferences FOR ALL
+TO authenticated
+USING (auth.uid() = user_id)
+WITH CHECK (auth.uid() = user_id);
+
+-- Create reports table
+CREATE TABLE IF NOT EXISTS reports (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  post_id uuid NOT NULL,
+  reporter_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason text NOT NULL,
+  post_type text DEFAULT 'drop',
+  status text DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'resolved', 'dismissed')),
+  created_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE reports ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own reports"
+ON reports FOR SELECT
+TO authenticated
+USING (auth.uid() = reporter_id);
+
+CREATE POLICY "Users can create reports"
+ON reports FOR INSERT
+TO authenticated
+WITH CHECK (auth.uid() = reporter_id);
+
+CREATE INDEX IF NOT EXISTS idx_reports_post_id ON reports(post_id);
+CREATE INDEX IF NOT EXISTS idx_reports_reporter_id ON reports(reporter_id);
+CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
+
+-- Create badges table
+CREATE TABLE IF NOT EXISTS badges (
+  id text PRIMARY KEY,
+  name text NOT NULL,
+  icon text NOT NULL,
+  description text NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE badges ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Anyone can view badges"
+ON badges FOR SELECT
+TO authenticated
+USING (true);
+
+-- Create user_badges table
+CREATE TABLE IF NOT EXISTS user_badges (
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  badge_id text REFERENCES badges(id) ON DELETE CASCADE,
+  awarded_at timestamptz DEFAULT now(),
+  PRIMARY KEY (user_id, badge_id)
+);
+
+ALTER TABLE user_badges ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Anyone can view user badges"
+ON user_badges FOR SELECT
+TO authenticated
+USING (true);
+
+CREATE POLICY "System can award badges"
+ON user_badges FOR INSERT
+TO authenticated
+WITH CHECK (auth.uid() = user_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_badges_user_id ON user_badges(user_id);
+
+-- Create subscriptions table
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status text NOT NULL CHECK (status IN ('active', 'inactive', 'cancelled', 'expired')),
+  plan text NOT NULL CHECK (plan IN ('monthly', 'yearly')),
+  started_at timestamptz DEFAULT now(),
+  expires_at timestamptz,
+  created_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own subscriptions"
+ON subscriptions FOR SELECT
+TO authenticated
+USING (auth.uid() = user_id);
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
+
+-- Create post_engagement table
+CREATE TABLE IF NOT EXISTS post_engagement (
+  post_id uuid PRIMARY KEY,
+  feel_count integer DEFAULT 0,
+  comment_count integer DEFAULT 0,
+  share_count integer DEFAULT 0,
+  updated_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE post_engagement ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Anyone can view post engagement"
+ON post_engagement FOR SELECT
+TO authenticated
+USING (true);
+
+-- Insert default badges
+INSERT INTO badges (id, name, icon, description) VALUES
+  ('first_post', 'First Drop', '📝', 'Created your first drop'),
+  ('social_butterfly', 'Social Butterfly', '🦋', 'Liked 10 posts'),
+  ('commenter', 'Commenter', '💬', 'Left 5 comments'),
+  ('voter', 'Democracy', '🗳️', 'Voted on 5 polls'),
+  ('week_warrior', 'Week Warrior', '🔥', '7 day streak'),
+  ('month_master', 'Month Master', '⭐', '30 day streak'),
+  ('rising_star', 'Rising Star', '🌟', 'Reached level 5'),
+  ('vibe_legend', 'VIBE Legend', '👑', 'Reached level 10')
+ON CONFLICT (id) DO NOTHING;
+
+-- Create function to increment drop views
+CREATE OR REPLACE FUNCTION increment_drop_views(drop_id uuid)
+RETURNS void AS $$
+BEGIN
+  UPDATE drops SET seen_count = seen_count + 1 WHERE id = drop_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Create storage bucket for videos
+INSERT INTO storage.buckets (id, name, public) 
+VALUES ('videos', 'videos', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Set up storage policies for videos bucket
+CREATE POLICY "Videos are publicly accessible"
+ON storage.objects FOR SELECT
+TO public
+USING (bucket_id = 'videos');
+
+CREATE POLICY "Authenticated users can upload videos"
+ON storage.objects FOR INSERT
+TO authenticated
+WITH CHECK (bucket_id = 'videos' AND auth.uid()::text = (storage.foldername(name))[1]);
+
+CREATE POLICY "Users can delete own videos"
+ON storage.objects FOR DELETE
+TO authenticated
+USING (bucket_id = 'videos' AND auth.uid()::text = (storage.foldername(name))[1]);

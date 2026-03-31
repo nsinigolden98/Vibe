@@ -1,8 +1,13 @@
-import { useState, useEffect } from 'react';
-import { Heart, MessageCircle, Share2, UserPlus, Eye, Clock } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Heart, MessageCircle, Eye, Clock, UserPlus, UserCheck } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatDistanceToNow } from '../../lib/utils';
+import { soundManager } from '../../lib/soundManager';
+import { ShareMenu } from './ShareMenu';
+import { useOptimisticLike } from '../../hooks/useOptimisticUpdate';
+import { useGamification } from '../../hooks/useGamification';
+import { useUserTracking } from '../../hooks/useUserTracking';
 
 interface DropCardProps {
   drop: {
@@ -10,6 +15,7 @@ interface DropCardProps {
     user_id: string;
     content: string | null;
     image_url: string | null;
+    video_url?: string | null;
     mood: string | null;
     seen_count: number;
     created_at: string;
@@ -28,14 +34,32 @@ interface DropCardProps {
 
 export function DropCard({ drop, onRefresh, onOpenFull }: DropCardProps) {
   const { user, profile } = useAuth();
+  const { addXP } = useGamification();
+  const { trackLike, trackView } = useUserTracking();
+  const { toggleLike } = useOptimisticLike();
+  
   const [isVibingWith, setIsVibingWith] = useState(false);
   const [vibingLoading, setVibingLoading] = useState(false);
+  const [localLikeState, setLocalLikeState] = useState({
+    hasLiked: drop.user_has_felt || false,
+    count: drop.feels_count || 0,
+  });
+  const [isHidden, setIsHidden] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
 
   useEffect(() => {
     if (user && drop.user_id !== user.id) {
       checkVibeStatus();
     }
-  }, [user, drop.user_id]);
+    trackView(drop.id);
+  }, [user, drop.user_id, drop.id]);
+
+  useEffect(() => {
+    setLocalLikeState({
+      hasLiked: drop.user_has_felt || false,
+      count: drop.feels_count || 0,
+    });
+  }, [drop.user_has_felt, drop.feels_count]);
 
   async function checkVibeStatus() {
     if (!user) return;
@@ -52,31 +76,32 @@ export function DropCard({ drop, onRefresh, onOpenFull }: DropCardProps) {
     }
   }
 
-  async function handleFeel() {
+  const handleFeel = useCallback(async () => {
     if (!user) return;
 
-    try {
-      if (drop.user_has_felt) {
-        await supabase
-          .from('feels')
-          .delete()
-          .eq('drop_id', drop.id)
-          .eq('user_id', user.id);
-      } else {
-        await supabase
-          .from('feels')
-          .insert({ drop_id: drop.id, user_id: user.id });
-      }
-      onRefresh();
-    } catch (error) {
-      console.error('Error toggling feel:', error);
+    const previousState = { ...localLikeState };
+    
+    await toggleLike(
+      drop.id,
+      localLikeState,
+      (newState) => setLocalLikeState(newState),
+      () => setLocalLikeState(previousState)
+    );
+
+    if (!localLikeState.hasLiked) {
+      await addXP('like');
+      await trackLike(drop.id);
     }
-  }
+    
+    onRefresh();
+  }, [user, drop.id, localLikeState, toggleLike, addXP, trackLike, onRefresh]);
 
   async function handleVibeWith() {
     if (!user || drop.user_id === user.id || vibingLoading) return;
 
     setVibingLoading(true);
+    soundManager.playClick();
+    
     try {
       if (isVibingWith) {
         await supabase
@@ -101,35 +126,12 @@ export function DropCard({ drop, onRefresh, onOpenFull }: DropCardProps) {
     }
   }
 
-  async function handleFlow() {
-    const link = window.location.href.includes('drop')
-      ? window.location.href
-      : `${window.location.origin}?drop=${drop.id}`;
-
-    try {
-      if (navigator.share) {
-        await navigator.share({
-          title: 'Check this out on VIBE',
-          url: link,
-        });
-      } else {
-        await navigator.clipboard.writeText(link);
-        alert('Link copied to clipboard!');
-      }
-    } catch (error) {
-      console.error('Error sharing:', error);
-    }
-  }
-
   async function handleDelete() {
     if (!user || user.id !== drop.user_id) return;
     if (!confirm('Delete this drop? This cannot be undone.')) return;
 
     try {
-      await supabase
-        .from('drops')
-        .delete()
-        .eq('id', drop.id);
+      await supabase.from('drops').delete().eq('id', drop.id);
       onRefresh();
     } catch (error) {
       console.error('Error deleting drop:', error);
@@ -137,8 +139,15 @@ export function DropCard({ drop, onRefresh, onOpenFull }: DropCardProps) {
     }
   }
 
+  const handleOpenFull = () => {
+    soundManager.playClick();
+    onOpenFull();
+  };
+
+  if (isHidden) return null;
+
   return (
-    <div className="bg-white dark:bg-gray-900 p-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+    <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800 hover:shadow-md transition-shadow">
       <div className="flex items-start gap-3">
         <div className={`w-12 h-12 bg-gradient-to-br ${drop.users.avatar_gradient} rounded-full flex items-center justify-center text-xl flex-shrink-0`}>
           {drop.users.avatar_symbol}
@@ -160,13 +169,17 @@ export function DropCard({ drop, onRefresh, onOpenFull }: DropCardProps) {
               <button
                 onClick={handleVibeWith}
                 disabled={vibingLoading}
-                className={`text-xs font-medium px-3 py-1 rounded-full transition-all ${
+                className={`flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full transition-all ${
                   isVibingWith
                     ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
                     : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
                 }`}
               >
-                {isVibingWith ? 'Vibing' : 'Vibe With'}
+                {isVibingWith ? (
+                  <><UserCheck className="w-3 h-3" /> Vibing</>
+                ) : (
+                  <><UserPlus className="w-3 h-3" /> Vibe</>
+                )}
               </button>
             )}
           </div>
@@ -184,48 +197,68 @@ export function DropCard({ drop, onRefresh, onOpenFull }: DropCardProps) {
 
           {drop.content && (
             <p
-              onClick={onOpenFull}
-              className="text-gray-900 dark:text-white mb-3 cursor-pointer hover:text-gray-700 dark:hover:text-gray-300"
+              onClick={handleOpenFull}
+              className="text-gray-900 dark:text-white mb-3 cursor-pointer hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
             >
               {drop.content}
             </p>
           )}
 
           {drop.image_url && (
-            <img
-              src={drop.image_url}
-              alt="Drop"
-              onClick={onOpenFull}
-              className="w-full rounded-xl mb-3 cursor-pointer hover:opacity-90 transition-opacity"
+            <div className="relative mb-3">
+              {!imageLoaded && (
+                <div className="absolute inset-0 bg-gray-200 dark:bg-gray-700 rounded-xl animate-pulse" />
+              )}
+              <img
+                src={drop.image_url}
+                alt="Drop"
+                onClick={handleOpenFull}
+                onLoad={() => setImageLoaded(true)}
+                className={`w-full rounded-xl cursor-pointer hover:opacity-90 transition-all ${
+                  imageLoaded ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
+            </div>
+          )}
+
+          {drop.video_url && (
+            <video
+              src={drop.video_url}
+              controls
+              muted
+              playsInline
+              className="w-full rounded-xl mb-3"
+              onClick={(e) => e.stopPropagation()}
             />
           )}
 
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-6 text-gray-500 dark:text-gray-400">
+            <div className="flex items-center gap-6">
               <button
                 onClick={handleFeel}
-                className={`flex items-center gap-1.5 hover:text-red-500 transition-colors ${
-                  drop.user_has_felt ? 'text-red-500' : ''
+                className={`flex items-center gap-1.5 transition-colors ${
+                  localLikeState.hasLiked ? 'text-red-500' : 'text-gray-500 dark:text-gray-400 hover:text-red-500'
                 }`}
               >
-                <Heart className={`w-5 h-5 ${drop.user_has_felt ? 'fill-current' : ''}`} />
-                <span className="text-sm font-medium">{drop.feels_count || 0}</span>
+                <Heart className={`w-5 h-5 ${localLikeState.hasLiked ? 'fill-current' : ''}`} />
+                <span className="text-sm font-medium">{localLikeState.count}</span>
               </button>
 
               <button
-                onClick={onOpenFull}
-                className="flex items-center gap-1.5 hover:text-blue-500 transition-colors"
+                onClick={handleOpenFull}
+                className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-500 transition-colors"
               >
                 <MessageCircle className="w-5 h-5" />
                 <span className="text-sm font-medium">{drop.echoes_count || 0}</span>
               </button>
 
-              <button
-                onClick={handleFlow}
-                className="flex items-center gap-1.5 hover:text-green-500 transition-colors"
-              >
-                <Share2 className="w-5 h-5" />
-              </button>
+              <ShareMenu
+                postId={drop.id}
+                postType="drop"
+                username={drop.users.username}
+                preview={drop.content || undefined}
+                onHide={() => setIsHidden(true)}
+              />
             </div>
 
             {user && user.id === drop.user_id && (

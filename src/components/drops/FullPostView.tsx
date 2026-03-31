@@ -1,8 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
-import { X, Heart, MessageCircle, Share2, Send, Loader2 } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { X, Heart, MessageCircle, Send, Loader2, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatDistanceToNow } from '../../lib/utils';
+import { soundManager } from '../../lib/soundManager';
+import { useOptimisticComment } from '../../hooks/useOptimisticUpdate';
+import { useGamification } from '../../hooks/useGamification';
+import { useUserTracking } from '../../hooks/useUserTracking';
 
 interface FullPostViewProps {
   dropId: string;
@@ -10,22 +14,52 @@ interface FullPostViewProps {
   onRefresh: () => void;
 }
 
+interface Echo {
+  id: string;
+  content: string;
+  created_at: string;
+  user_id: string;
+  users: {
+    username: string;
+    avatar_symbol: string;
+    avatar_gradient: string;
+  };
+  isOptimistic?: boolean;
+}
+
 export function FullPostView({ dropId, onClose, onRefresh }: FullPostViewProps) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const { addXP } = useGamification();
+  const { trackComment } = useUserTracking();
+  const { addComment } = useOptimisticComment();
+  
   const [drop, setDrop] = useState<any>(null);
-  const [echoes, setEchoes] = useState<any[]>([]);
+  const [echoes, setEchoes] = useState<Echo[]>([]);
   const [newEcho, setNewEcho] = useState('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [localLikeState, setLocalLikeState] = useState({ hasLiked: false, count: 0 });
   const echoesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     loadDropAndEchoes();
+    incrementViewCount();
 
     const channel = supabase
       .channel(`drop_${dropId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'echoes', filter: `drop_id=eq.${dropId}` }, () => {
-        loadEchoes();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'echoes', filter: `drop_id=eq.${dropId}` }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          const newEcho = payload.new as Echo;
+          if (!newEcho.id.startsWith('temp-')) {
+            setEchoes(prev => {
+              const exists = prev.some(e => e.id === newEcho.id);
+              if (exists) return prev;
+              return [...prev.filter(e => !e.isOptimistic), newEcho];
+            });
+          }
+        } else if (payload.eventType === 'DELETE') {
+          setEchoes(prev => prev.filter(e => e.id !== payload.old.id));
+        }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feels', filter: `drop_id=eq.${dropId}` }, () => {
         loadDrop();
@@ -36,6 +70,18 @@ export function FullPostView({ dropId, onClose, onRefresh }: FullPostViewProps) 
       supabase.removeChannel(channel);
     };
   }, [dropId]);
+
+  useEffect(() => {
+    echoesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [echoes]);
+
+  async function incrementViewCount() {
+    try {
+      await supabase.rpc('increment_drop_views', { drop_id: dropId });
+    } catch (error) {
+      console.error('Error incrementing views:', error);
+    }
+  }
 
   async function loadDrop() {
     const { data: dropData } = await supabase
@@ -57,6 +103,10 @@ export function FullPostView({ dropId, onClose, onRefresh }: FullPostViewProps) 
         ...dropData,
         feels_count: feelsResult.count || 0,
         user_has_felt: !!userFeelResult.data,
+      });
+      setLocalLikeState({
+        hasLiked: !!userFeelResult.data,
+        count: feelsResult.count || 0,
       });
     }
   }
@@ -83,8 +133,18 @@ export function FullPostView({ dropId, onClose, onRefresh }: FullPostViewProps) 
   async function handleFeel() {
     if (!user || !drop) return;
 
+    const previousState = { ...localLikeState };
+    
+    const newState = {
+      hasLiked: !localLikeState.hasLiked,
+      count: localLikeState.hasLiked ? localLikeState.count - 1 : localLikeState.count + 1,
+    };
+    
+    setLocalLikeState(newState);
+    soundManager.playLike();
+
     try {
-      if (drop.user_has_felt) {
+      if (localLikeState.hasLiked) {
         await supabase
           .from('feels')
           .delete()
@@ -95,40 +155,69 @@ export function FullPostView({ dropId, onClose, onRefresh }: FullPostViewProps) 
           .from('feels')
           .insert({ drop_id: dropId, user_id: user.id });
       }
-      loadDrop();
       onRefresh();
     } catch (error) {
+      setLocalLikeState(previousState);
       console.error('Error toggling feel:', error);
     }
   }
 
-  async function handleSubmitEcho(e: React.FormEvent) {
+  const handleSubmitEcho = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !newEcho.trim() || submitting) return;
 
-    setSubmitting(true);
-    try {
-      await supabase
-        .from('echoes')
-        .insert({
-          drop_id: dropId,
-          user_id: user.id,
-          content: newEcho.trim(),
-        });
+    const content = newEcho.trim();
+    setNewEcho('');
 
-      setNewEcho('');
-      onRefresh();
+    const tempComment = {
+      content,
+      users: {
+        username: profile?.username || 'You',
+        avatar_symbol: profile?.avatar_symbol || '🌀',
+        avatar_gradient: profile?.avatar_gradient || 'from-gray-400 to-gray-500',
+      },
+    };
+
+    await addComment(
+      dropId,
+      content,
+      tempComment,
+      (comment) => {
+        setEchoes(prev => [...prev, { ...comment, isOptimistic: true }]);
+      },
+      (tempId, realComment) => {
+        setEchoes(prev => prev.map(e => e.id === tempId ? { ...realComment, isOptimistic: false } : e));
+      },
+      (tempId) => {
+        setEchoes(prev => prev.filter(e => e.id !== tempId));
+      }
+    );
+
+    await addXP('comment');
+    await trackComment(dropId);
+    onRefresh();
+  }, [user, newEcho, submitting, profile, dropId, addComment, addXP, trackComment, onRefresh]);
+
+  async function handleDeleteEcho(echoId: string) {
+    if (!user) return;
+    if (!confirm('Delete this comment?')) return;
+
+    try {
+      await supabase.from('echoes').delete().eq('id', echoId);
+      setEchoes(prev => prev.filter(e => e.id !== echoId));
     } catch (error) {
-      console.error('Error submitting echo:', error);
-    } finally {
-      setSubmitting(false);
+      console.error('Error deleting echo:', error);
     }
   }
 
   if (loading || !drop) {
     return (
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 pointer-events-auto">
-        <Loader2 className="w-8 h-8 animate-spin text-white" />
+        <div className="bg-white dark:bg-gray-900 w-full md:max-w-2xl md:rounded-2xl rounded-t-3xl max-h-[90vh] flex flex-col pointer-events-auto p-8">
+          <div className="flex items-center justify-center">
+            <Loader2 className="w-8 h-8 animate-spin text-red-500" />
+          </div>
+        </div>
       </div>
     );
   }
@@ -175,15 +264,24 @@ export function FullPostView({ dropId, onClose, onRefresh }: FullPostViewProps) 
                   className="w-full rounded-xl mb-3"
                 />
               )}
+              {drop.video_url && (
+                <video
+                  src={drop.video_url}
+                  controls
+                  muted
+                  playsInline
+                  className="w-full rounded-xl mb-3"
+                />
+              )}
               <div className="flex items-center gap-6 text-gray-500 dark:text-gray-400 mb-4">
                 <button
                   onClick={handleFeel}
-                  className={`flex items-center gap-1.5 hover:text-red-500 transition-colors ${
-                    drop.user_has_felt ? 'text-red-500' : ''
+                  className={`flex items-center gap-1.5 transition-colors ${
+                    localLikeState.hasLiked ? 'text-red-500' : 'hover:text-red-500'
                   }`}
                 >
-                  <Heart className={`w-5 h-5 ${drop.user_has_felt ? 'fill-current' : ''}`} />
-                  <span className="text-sm font-medium">{drop.feels_count || 0}</span>
+                  <Heart className={`w-5 h-5 ${localLikeState.hasLiked ? 'fill-current' : ''}`} />
+                  <span className="text-sm font-medium">{localLikeState.count}</span>
                 </button>
                 <div className="flex items-center gap-1.5">
                   <MessageCircle className="w-5 h-5" />
@@ -199,7 +297,7 @@ export function FullPostView({ dropId, onClose, onRefresh }: FullPostViewProps) 
               <p className="text-sm text-gray-500 dark:text-gray-400">No echoes yet. Be the first!</p>
             ) : (
               echoes.map((echo) => (
-                <div key={echo.id} className="flex items-start gap-3">
+                <div key={echo.id} className="flex items-start gap-3 group">
                   <div className={`w-8 h-8 bg-gradient-to-br ${echo.users.avatar_gradient} rounded-full flex items-center justify-center text-sm flex-shrink-0`}>
                     {echo.users.avatar_symbol}
                   </div>
@@ -211,9 +309,20 @@ export function FullPostView({ dropId, onClose, onRefresh }: FullPostViewProps) 
                       <span className="text-xs text-gray-500 dark:text-gray-400">
                         {formatDistanceToNow(echo.created_at)}
                       </span>
+                      {echo.isOptimistic && (
+                        <span className="text-xs text-gray-400">Sending...</span>
+                      )}
                     </div>
                     <p className="text-sm text-gray-700 dark:text-gray-300">{echo.content}</p>
                   </div>
+                  {user && echo.user_id === user.id && !echo.isOptimistic && (
+                    <button
+                      onClick={() => handleDeleteEcho(echo.id)}
+                      className="opacity-0 group-hover:opacity-100 p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               ))
             )}

@@ -1,8 +1,13 @@
-import { useState, useEffect } from 'react';
-import { Heart, Share2, Eye, Trash2 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Heart, Share2, Eye, Trash2, Sparkles } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatDistanceToNow } from '../../lib/utils';
+import { soundManager } from '../../lib/soundManager';
+import { ShareMenu } from './ShareMenu';
+import { useOptimisticVote } from '../../hooks/useOptimisticUpdate';
+import { useGamification } from '../../hooks/useGamification';
+import { useUserTracking } from '../../hooks/useUserTracking';
 
 interface PulseCardProps {
   pulse: {
@@ -24,10 +29,15 @@ interface PulseCardProps {
 
 export function PulseCard({ pulse, onRefresh }: PulseCardProps) {
   const { user } = useAuth();
+  const { addXP } = useGamification();
+  const { trackVote } = useUserTracking();
+  const { toggleVote } = useOptimisticVote();
+  
   const [votes, setVotes] = useState<Record<number, number>>({});
   const [userVote, setUserVote] = useState<number | null>(null);
   const [totalVotes, setTotalVotes] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [isHidden, setIsHidden] = useState(false);
 
   useEffect(() => {
     loadVotes();
@@ -66,46 +76,37 @@ export function PulseCard({ pulse, onRefresh }: PulseCardProps) {
     }
   }
 
-  async function handleVote(optionIndex: number) {
-    if (!user) return;
+  const handleVote = useCallback(async (optionIndex: number) => {
+    if (!user || loading) return;
 
-    setLoading(true);
-    try {
-      if (userVote === optionIndex) {
-        await supabase
-          .from('pulse_votes')
-          .delete()
-          .eq('pulse_id', pulse.id)
-          .eq('user_id', user.id)
-          .eq('option_index', optionIndex);
-        setUserVote(null);
-      } else {
-        if (userVote !== null) {
-          await supabase
-            .from('pulse_votes')
-            .delete()
-            .eq('pulse_id', pulse.id)
-            .eq('user_id', user.id);
-        }
+    const previousVotes = { ...votes };
+    const previousUserVote = userVote;
+    const previousTotal = totalVotes;
 
-        await supabase
-          .from('pulse_votes')
-          .insert({
-            pulse_id: pulse.id,
-            user_id: user.id,
-            option_index: optionIndex,
-          });
-        setUserVote(optionIndex);
+    await toggleVote(
+      pulse.id,
+      optionIndex,
+      votes,
+      userVote,
+      (newVotes, newUserVote) => {
+        setVotes(newVotes);
+        setUserVote(newUserVote);
+        setTotalVotes(Object.values(newVotes).reduce((a, b) => a + b, 0));
+      },
+      () => {
+        setVotes(previousVotes);
+        setUserVote(previousUserVote);
+        setTotalVotes(previousTotal);
       }
+    );
 
-      await loadVotes();
-      onRefresh();
-    } catch (error) {
-      console.error('Error voting:', error);
-    } finally {
-      setLoading(false);
+    if (userVote !== optionIndex) {
+      await addXP('vote');
+      await trackVote(pulse.id);
     }
-  }
+
+    onRefresh();
+  }, [user, pulse.id, votes, userVote, totalVotes, toggleVote, addXP, trackVote, onRefresh, loading]);
 
   const getPercentage = (optionIndex: number) => {
     if (totalVotes === 0) return 0;
@@ -117,10 +118,7 @@ export function PulseCard({ pulse, onRefresh }: PulseCardProps) {
     if (!confirm('Delete this poll? This cannot be undone.')) return;
 
     try {
-      await supabase
-        .from('pulses')
-        .delete()
-        .eq('id', pulse.id);
+      await supabase.from('pulses').delete().eq('id', pulse.id);
       onRefresh();
     } catch (error) {
       console.error('Error deleting pulse:', error);
@@ -128,28 +126,12 @@ export function PulseCard({ pulse, onRefresh }: PulseCardProps) {
     }
   }
 
-  async function handleShare() {
-    const link = window.location.href.includes('pulse')
-      ? window.location.href
-      : `${window.location.origin}?pulse=${pulse.id}`;
+  if (isHidden) return null;
 
-    try {
-      if (navigator.share) {
-        await navigator.share({
-          title: 'Check this poll on VIBE',
-          url: link,
-        });
-      } else {
-        await navigator.clipboard.writeText(link);
-        alert('Link copied to clipboard!');
-      }
-    } catch (error) {
-      console.error('Error sharing:', error);
-    }
-  }
+  const hasVoted = userVote !== null;
 
   return (
-    <div className="w-full p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+    <div className="w-full p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow">
       <div className="flex items-start gap-3 mb-4">
         <div className={`w-12 h-12 bg-gradient-to-br ${pulse.users.avatar_gradient} rounded-full flex items-center justify-center text-xl flex-shrink-0`}>
           {pulse.users.avatar_symbol}
@@ -159,8 +141,9 @@ export function PulseCard({ pulse, onRefresh }: PulseCardProps) {
             <span className="font-semibold text-gray-900 dark:text-white">
               {pulse.users.username}
             </span>
+            <Sparkles className="w-4 h-4 text-purple-500" />
             {pulse.mood && (
-              <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-xs rounded-full">
+              <span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 text-xs rounded-full">
                 {pulse.mood}
               </span>
             )}
@@ -186,23 +169,27 @@ export function PulseCard({ pulse, onRefresh }: PulseCardProps) {
               key={idx}
               onClick={() => handleVote(idx)}
               disabled={loading}
-              className={`w-full p-3 rounded-lg transition-all text-left relative overflow-hidden ${
+              className={`w-full p-3 rounded-lg transition-all text-left relative overflow-hidden disabled:opacity-70 ${
                 isSelected
-                  ? 'bg-red-500 text-white'
+                  ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
-              <div
-                className={`absolute inset-0 transition-all ${
-                  isSelected ? 'bg-red-600' : 'bg-gray-200 dark:bg-gray-600'
-                }`}
-                style={{ width: `${percentage}%` }}
-              />
+              {hasVoted && (
+                <div
+                  className={`absolute inset-0 transition-all ${
+                    isSelected ? 'bg-red-600' : 'bg-gray-300 dark:bg-gray-600'
+                  }`}
+                  style={{ width: `${percentage}%`, opacity: 0.3 }}
+                />
+              )}
               <div className="relative flex items-center justify-between">
                 <span className="font-medium">{option.text}</span>
-                <span className="text-sm opacity-75">
-                  {percentage}% ({count})
-                </span>
+                {hasVoted && (
+                  <span className="text-sm opacity-90">
+                    {percentage}% ({count})
+                  </span>
+                )}
               </div>
             </button>
           );
@@ -219,12 +206,13 @@ export function PulseCard({ pulse, onRefresh }: PulseCardProps) {
             <Eye className="w-4 h-4" />
             {pulse.seen_count}
           </div>
-          <button
-            onClick={handleShare}
-            className="flex items-center gap-1 hover:text-green-500 transition-colors"
-          >
-            <Share2 className="w-4 h-4" />
-          </button>
+          <ShareMenu
+            postId={pulse.id}
+            postType="pulse"
+            username={pulse.users.username}
+            preview={pulse.question}
+            onHide={() => setIsHidden(true)}
+          />
         </div>
 
         {user && user.id === pulse.user_id && (
