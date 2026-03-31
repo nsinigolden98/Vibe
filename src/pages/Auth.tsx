@@ -17,7 +17,7 @@ const Auth: React.FC = () => {
 
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/');
+      navigate('/stream');
     }
   }, [isAuthenticated, navigate]);
 
