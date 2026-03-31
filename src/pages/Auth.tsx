@@ -33,7 +33,7 @@ const Auth: React.FC = () => {
           setError(result.error);
         } else {
           soundManager.playPost();
-          navigate('/');
+          navigate('/Stream');
         }
       } else {
         const result = await signUp(email, password);
@@ -44,7 +44,7 @@ const Auth: React.FC = () => {
           soundManager.playPost();
         } else {
           soundManager.playPost();
-          navigate('/');
+          navigate('/Stream');
         }
       }
     } catch (err: any) {
