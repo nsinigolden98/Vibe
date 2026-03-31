@@ -35,7 +35,7 @@ export async function signInWithGoogle() {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: window.location.origin,
+      redirectTo: `${window.location.origin}/page/streampage`,
     },
   });
   return { data, error };
@@ -61,6 +61,7 @@ export async function signInAsGuest() {
   return { data, error: null };
 }
 
+
 export async function createUserProfile(userId: string) {
   let username = generateUsername();
   let attempts = 0;
@@ -73,9 +74,7 @@ export async function createUserProfile(userId: string) {
       .eq('username', username)
       .maybeSingle();
 
-    if (!existingUser) {
-      break;
-    }
+    if (!existingUser) break;
 
     username = generateUsername();
     attempts++;
@@ -83,6 +82,18 @@ export async function createUserProfile(userId: string) {
 
   const avatar = generateAvatar();
 
+  // ✅ Check if user already exists
+  const { data: existing } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (existing) {
+    return { data: existing, error: null };
+  }
+
+  // ✅ Create new user
   const { data, error } = await supabase
     .from('users')
     .insert({

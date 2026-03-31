@@ -35,13 +35,6 @@ export function LoginScreen({ onComplete }: LoginScreenProps) {
       return;
     }
 
-    if (data.user) {
-      const { data: session } = await supabase.auth.getSession();
-      if (session.session) {
-        onComplete();
-      }
-    }
-
     setLoading(false);
   }
 

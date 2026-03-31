@@ -98,6 +98,36 @@ export function StreamPage() {
         loadFeed();
       })
       .subscribe();
+      import { useEffect } from 'react';
+import { supabase } from '../lib/supabase'; // adjust path if needed
+import { createUserProfile } from '../lib/auth';
+
+export default function StreamPage() {
+
+  useEffect(() => {
+    async function checkUser() {
+      const { data } = await supabase.auth.getSession();
+
+      if (!data.session) {
+        window.location.href = '/'; // back to login
+        return;
+      }
+
+      const { user } = data.session;
+
+      // Create profile if it doesn't exist
+      await createUserProfile(user.id);
+    }
+
+    checkUser();
+  }, []);
+
+  return (
+    <div>
+      ...
+    </div>
+  );
+}
 
     return () => {
       supabase.removeChannel(dropsChannel);
