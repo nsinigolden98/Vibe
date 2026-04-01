@@ -14,6 +14,7 @@ import Spaces from '@/pages/Spaces';
 import Aura from '@/pages/Aura';
 import Discover from '@/pages/Discover';
 import Auth from '@/pages/Auth';
+import AuthCallback from '@/pages/AuthCallback';
 
 import './App.css';
 
