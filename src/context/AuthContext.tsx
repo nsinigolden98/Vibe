@@ -26,9 +26,25 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
+ /* const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);*/
+  
+  //fakedata
+  const [user, setUser] = useState<User | null>({
+  id: 'dev-user',
+  email: 'dev@vibe.com',
+  username: 'DevUser',
+  premium: true,
+  sound_enabled: true
+} as User);
+
+const [session, setSession] = useState<any>(null);
+const [loading, setLoading] = useState(false);
+  
+  //fakedata stop here 
+  
+  
 
   const fetchUserProfile = useCallback(async (userId: string, email: string) => {
     let profile = await getUserProfile(userId);
@@ -44,7 +60,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(profile);
   }, []);
 
-  useEffect(() => {
+/*  useEffect(() => {
     // Check for existing session
     const initAuth = async () => {
       try {
@@ -81,7 +97,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       subscription.unsubscribe();
     };
-  }, [fetchUserProfile]);
+  }, [fetchUserProfile]);*/
+  
+  //fakedata
+  useEffect(() => {
+  // DEV BYPASS: do nothing
+}, []);
+//end of fakedata
+  
+  
+  
+  
 
   const signIn = async (email: string, password: string) => {
     const { error } = await signInWithEmail(email, password);
@@ -133,7 +159,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signInWithGoogle: handleGoogleSignIn,
         logout,
         refreshUser,
-        isAuthenticated: !!user
+     //   isAuthenticated: !!user
+     isAuthenticated: true
       }}
     >
       {children}
