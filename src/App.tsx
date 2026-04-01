@@ -108,7 +108,7 @@ const AppContent: React.FC = () => {
                 element={<AuthCallback />}
               />
               <Route
-                path="/"
+                path="/stream"
                 element={
                   <ProtectedRoute>
                     <Stream currentUser={user} />
