@@ -34,7 +34,7 @@ const PulseCard: React.FC<PulseCardProps> = ({ pulse, currentUser, onVote }) => 
   const handleVote = async (optionId: string) => {
     if (!currentUser) return;
     
-    const result = await votePulse(optionId, currentUser.id);
+    const result = await votePulse(optionId, currentUser.id, pulse.id);
     
     if (result.action === 'added') {
       soundManager.playClick();

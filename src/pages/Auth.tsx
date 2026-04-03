@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, Loader2, Sparkles, ArrowRight } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, Loader2, ArrowRight, Sparkles } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { soundManager } from '@/sounds/SoundManager';
 
 const Auth: React.FC = () => {
   const navigate = useNavigate();
-  const { signIn, signUp, signInWithGoogle, isAuthenticated } = useAuth();
+  const { signIn, signUp, signInWithGoogle, enterDemoMode, isAuthenticated } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -17,7 +17,7 @@ const Auth: React.FC = () => {
 
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/Stream');
+      navigate('/');
     }
   }, [isAuthenticated, navigate]);
 
@@ -33,7 +33,7 @@ const Auth: React.FC = () => {
           setError(result.error);
         } else {
           soundManager.playPost();
-          navigate('/Stream');
+          navigate('/');
         }
       } else {
         const result = await signUp(email, password);
@@ -44,7 +44,7 @@ const Auth: React.FC = () => {
           soundManager.playPost();
         } else {
           soundManager.playPost();
-          navigate('/Stream');
+          navigate('/');
         }
       }
     } catch (err: any) {
@@ -68,6 +68,13 @@ const Auth: React.FC = () => {
       setError(err.message || 'An error occurred');
       setLoading(false);
     }
+  };
+
+  // DEMO MODE: Handle demo mode entry
+  const handleDemoMode = () => {
+    soundManager.playPost();
+    enterDemoMode();
+    navigate('/');
   };
 
   const toggleMode = () => {
@@ -216,6 +223,21 @@ const Auth: React.FC = () => {
           </svg>
           Continue with Google
         </button>
+
+        {/* DEMO MODE: Demo Mode Button */}
+        <div className="mt-4">
+          <button
+            onClick={handleDemoMode}
+            disabled={loading}
+            className="w-full py-3 bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30 border border-purple-500/30 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
+          >
+            <Sparkles className="w-5 h-5 text-purple-400" />
+            Enter Demo Vibe
+          </button>
+          <p className="text-center text-white/40 text-xs mt-2">
+            Try all premium features without signing up
+          </p>
+        </div>
 
         {/* Toggle */}
         <p className="text-center mt-6 text-white/60">

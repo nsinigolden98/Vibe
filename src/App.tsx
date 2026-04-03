@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { soundManager } from '@/sounds/SoundManager';
+import { setDemoUser } from '@/services/supabaseClient';
 import Navbar from '@/components/Navbar';
 import CreateDropModal from '@/components/CreateDropModal';
 import PremiumModal from '@/components/PremiumModal';
@@ -14,7 +15,11 @@ import Spaces from '@/pages/Spaces';
 import Aura from '@/pages/Aura';
 import Discover from '@/pages/Discover';
 import Auth from '@/pages/Auth';
-import AuthCallback from '@/pages/AuthCallback';
+import Signals from '@/pages/Signals';
+import Masks from '@/pages/Masks';
+import VoidWall from '@/pages/VoidWall';
+import TruthOrVoid from '@/pages/TruthOrVoid';
+import VibeMatch from '@/pages/VibeMatch';
 
 import './App.css';
 
@@ -63,16 +68,23 @@ const AuthCallback: React.FC = () => {
 
 // Main App Content
 const AppContent: React.FC = () => {
-  const { user, refreshUser, isAuthenticated } = useAuth();
+  const { user, refreshUser, isAuthenticated, isDemoMode } = useAuth();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
 
   useEffect(() => {
+    // DEMO MODE: Sync demo user with supabase client
+    if (isDemoMode && user) {
+      setDemoUser(user);
+    } else if (!isDemoMode) {
+      setDemoUser(null);
+    }
+    
     // Initialize sound manager
     if (user) {
       soundManager.setEnabled(user.sound_enabled);
     }
-  }, [user]);
+  }, [user, isDemoMode]);
 
   const handleCreateDrop = () => {
     if (!isAuthenticated) {
@@ -98,7 +110,7 @@ const AppContent: React.FC = () => {
             />
           )}
 
-          <main className={`${isAuthenticated ? 'lg:ml-64' : ''} min-h-screen`}>
+          <main className={`${isAuthenticated ? 'lg:ml-64' : ''} min-h-screen pt-14 lg:pt-0`}>
             <Routes>
               <Route
                 path="/auth"
@@ -109,7 +121,7 @@ const AppContent: React.FC = () => {
                 element={<AuthCallback />}
               />
               <Route
-                path="/stream"
+                path="/"
                 element={
                   <ProtectedRoute>
                     <Stream currentUser={user} />
@@ -145,6 +157,46 @@ const AppContent: React.FC = () => {
                 element={
                   <ProtectedRoute>
                     <Aura currentUser={user} onUpdate={refreshUser} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/signals"
+                element={
+                  <ProtectedRoute>
+                    <Signals currentUser={user} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/masks"
+                element={
+                  <ProtectedRoute>
+                    <Masks currentUser={user} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/void"
+                element={
+                  <ProtectedRoute>
+                    <VoidWall currentUser={user} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/truth"
+                element={
+                  <ProtectedRoute>
+                    <TruthOrVoid currentUser={user} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/match"
+                element={
+                  <ProtectedRoute>
+                    <VibeMatch currentUser={user} />
                   </ProtectedRoute>
                 }
               />

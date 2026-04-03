@@ -3,6 +3,36 @@
 import { createClient } from '@supabase/supabase-js';
 import type { User, Drop, Echo, Space, SpaceMessage, PostEngagement, UserInteraction, Subscription, Badge, UserBadge, VibeRelationship, Notification } from '@/types';
 
+// DEMO MODE: Import demo storage
+import {
+  isDemoMode as checkDemoMode,
+  setDemoUser,
+  getDemoDrops,
+  saveDemoDrop,
+  getDemoSpaces,
+  saveDemoSpace,
+  getDemoMessages,
+  saveDemoMessage,
+  feelDemoDrop,
+  hasFeltDemoDrop,
+  getDemoFeelCount,
+  getDemoEchoes,
+  saveDemoEcho,
+  saveDemoPulse,
+  getDemoPulses,
+  voteDemoPulse,
+  saveDemoEvent,
+  getDemoEventForSpace,
+  saveDemoTicket,
+  hasDemoTicket,
+  getDemoStats,
+  getDemoUserVibes,
+  followDemoVibe,
+  unfollowDemoVibe,
+  PREDEFINED_VIBES,
+  clearDemoData
+} from './demoStorage';
+
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
@@ -16,6 +46,20 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     detectSessionInUrl: true
   }
+});
+
+// DEMO MODE: Export functions for demo storage
+export { setDemoUser, clearDemoData, checkDemoMode };
+
+// DEMO MODE: Check if in demo mode
+export const isDemoMode = (): boolean => {
+  return checkDemoMode();
+};
+
+// DEMO MODE: Helper to simulate success response
+const demoSuccess = <T>(data?: T): { data: T | null; error: null } => ({
+  data: data || null,
+  error: null
 });
 
 // Auth functions
@@ -103,6 +147,11 @@ export const getUserProfile = async (userId: string): Promise<User | null> => {
 };
 
 export const updateUserProfile = async (userId: string, updates: Partial<User>) => {
+  // DEMO MODE: Skip DB writes
+  if (isDemoMode()) {
+    return demoSuccess({ ...updates, id: userId });
+  }
+  
   const { data, error } = await supabase
     .from('users')
     .update(updates)
@@ -115,6 +164,12 @@ export const updateUserProfile = async (userId: string, updates: Partial<User>) 
 
 // Drop functions
 export const createDrop = async (drop: Omit<Drop, 'id' | 'created_at' | 'user'>) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    const newDrop = saveDemoDrop(drop);
+    return demoSuccess(newDrop);
+  }
+  
   const { data, error } = await supabase
     .from('drops')
     .insert(drop)
@@ -142,6 +197,12 @@ export const createDrop = async (drop: Omit<Drop, 'id' | 'created_at' | 'user'>)
 };
 
 export const getDrops = async (limit = 20, offset = 0): Promise<Drop[]> => {
+  // DEMO MODE: Get from localStorage
+  if (isDemoMode()) {
+    const drops = getDemoDrops();
+    return drops.slice(offset, offset + limit);
+  }
+  
   const { data, error } = await supabase
     .from('drops')
     .select(`
@@ -163,6 +224,11 @@ export const getDrops = async (limit = 20, offset = 0): Promise<Drop[]> => {
 };
 
 export const getFeedDrops = async (userId: string, limit = 20): Promise<Drop[]> => {
+  // DEMO MODE: Get from localStorage
+  if (isDemoMode()) {
+    return getDemoDrops().slice(0, limit);
+  }
+  
   // Get drops with algorithmic sorting
   const { data, error } = await supabase
     .rpc('get_feed_drops', {
@@ -180,6 +246,11 @@ export const getFeedDrops = async (userId: string, limit = 20): Promise<Drop[]> 
 };
 
 export const getUserDrops = async (userId: string, limit = 20): Promise<Drop[]> => {
+  // DEMO MODE: Get from localStorage
+  if (isDemoMode()) {
+    return getDemoDrops().slice(0, limit);
+  }
+  
   const { data, error } = await supabase
     .from('drops')
     .select(`
@@ -202,6 +273,12 @@ export const getUserDrops = async (userId: string, limit = 20): Promise<Drop[]> 
 
 // Pulse functions
 export const createPulse = async (drop: Omit<Drop, 'id' | 'created_at' | 'user'>, options: string[]) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    const pulse = saveDemoPulse(drop, options);
+    return demoSuccess(pulse);
+  }
+  
   const { data, error } = await supabase
     .from('drops')
     .insert({ ...drop, category: 'pulse' })
@@ -232,6 +309,13 @@ export const createPulse = async (drop: Omit<Drop, 'id' | 'created_at' | 'user'>
 };
 
 export const getPulseOptions = async (postId: string): Promise<any[]> => {
+  // DEMO MODE: Get from localStorage
+  if (isDemoMode()) {
+    const pulses = getDemoPulses();
+    const pulse = pulses.find(p => p.id === postId);
+    return pulse?.options || [];
+  }
+  
   const { data, error } = await supabase
     .from('pulse_options')
     .select('*')
@@ -245,7 +329,17 @@ export const getPulseOptions = async (postId: string): Promise<any[]> => {
   return data || [];
 };
 
-export const votePulse = async (optionId: string, userId: string) => {
+export const votePulse = async (optionId: string, userId: string, pulseId?: string): Promise<{ action: 'added' | 'removed' }> => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    // Extract pulseId from optionId if not provided
+    const actualPulseId = pulseId || optionId.split('-opt-')[0];
+    if (actualPulseId) {
+      voteDemoPulse(optionId, actualPulseId);
+    }
+    return { action: 'added' };
+  }
+  
   // Check if user already voted on this pulse
   const { data: existingVote } = await supabase
     .from('pulse_votes')
@@ -291,6 +385,12 @@ export const votePulse = async (optionId: string, userId: string) => {
 
 // Echo functions
 export const createEcho = async (echo: Omit<Echo, 'id' | 'created_at' | 'user'>) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    const newEcho = saveDemoEcho(echo.post_id, echo.content);
+    return demoSuccess(newEcho);
+  }
+  
   const { data, error } = await supabase
     .from('echoes')
     .insert(echo)
@@ -309,6 +409,11 @@ export const createEcho = async (echo: Omit<Echo, 'id' | 'created_at' | 'user'>)
 };
 
 export const getEchoes = async (postId: string): Promise<Echo[]> => {
+  // DEMO MODE: Get from localStorage
+  if (isDemoMode()) {
+    return getDemoEchoes(postId);
+  }
+  
   const { data, error } = await supabase
     .from('echoes')
     .select(`
@@ -328,6 +433,11 @@ export const getEchoes = async (postId: string): Promise<Echo[]> => {
 
 // Feel (like) functions
 export const feelDrop = async (postId: string, userId: string) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    return feelDemoDrop(postId);
+  }
+  
   // Check if already felt
   const { data: existing } = await supabase
     .from('user_interactions')
@@ -360,6 +470,11 @@ export const feelDrop = async (postId: string, userId: string) => {
 };
 
 export const hasFeltDrop = async (postId: string, userId: string): Promise<boolean> => {
+  // DEMO MODE: Check localStorage
+  if (isDemoMode()) {
+    return hasFeltDemoDrop(postId);
+  }
+  
   const { data } = await supabase
     .from('user_interactions')
     .select('*')
@@ -373,6 +488,11 @@ export const hasFeltDrop = async (postId: string, userId: string): Promise<boole
 
 // Vibe (follow) functions
 export const vibeWith = async (followerId: string, followingId: string) => {
+  // DEMO MODE: Skip
+  if (isDemoMode()) {
+    return { action: 'added' };
+  }
+  
   const { data: existing } = await supabase
     .from('vibe_relationships')
     .select('*')
@@ -396,6 +516,11 @@ export const vibeWith = async (followerId: string, followingId: string) => {
 };
 
 export const getVibing = async (userId: string): Promise<User[]> => {
+  // DEMO MODE: Return empty
+  if (isDemoMode()) {
+    return [];
+  }
+  
   const { data, error } = await supabase
     .from('vibe_relationships')
     .select('following:users!vibe_relationships_following_id_fkey(*)')
@@ -410,6 +535,11 @@ export const getVibing = async (userId: string): Promise<User[]> => {
 };
 
 export const getVibers = async (userId: string): Promise<User[]> => {
+  // DEMO MODE: Return empty
+  if (isDemoMode()) {
+    return [];
+  }
+  
   const { data, error } = await supabase
     .from('vibe_relationships')
     .select('follower:users!vibe_relationships_follower_id_fkey(*)')
@@ -424,6 +554,11 @@ export const getVibers = async (userId: string): Promise<User[]> => {
 };
 
 export const isVibing = async (followerId: string, followingId: string): Promise<boolean> => {
+  // DEMO MODE: Return false
+  if (isDemoMode()) {
+    return false;
+  }
+  
   const { data } = await supabase
     .from('vibe_relationships')
     .select('*')
@@ -436,6 +571,12 @@ export const isVibing = async (followerId: string, followingId: string): Promise
 
 // Space functions
 export const createSpace = async (space: Omit<Space, 'id' | 'created_at' | 'user' | 'member_count'>) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    const newSpace = saveDemoSpace(space);
+    return demoSuccess(newSpace);
+  }
+  
   const { data, error } = await supabase
     .from('spaces')
     .insert(space)
@@ -446,6 +587,11 @@ export const createSpace = async (space: Omit<Space, 'id' | 'created_at' | 'user
 };
 
 export const getSpaces = async (limit = 20): Promise<Space[]> => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    return getDemoSpaces().slice(0, limit);
+  }
+  
   const { data, error } = await supabase
     .from('spaces')
     .select(`
@@ -466,6 +612,11 @@ export const getSpaces = async (limit = 20): Promise<Space[]> => {
 };
 
 export const getSpaceMessages = async (spaceId: string, limit = 50): Promise<SpaceMessage[]> => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    return getDemoMessages(spaceId);
+  }
+  
   const { data, error } = await supabase
     .from('space_messages')
     .select(`
@@ -485,6 +636,12 @@ export const getSpaceMessages = async (spaceId: string, limit = 50): Promise<Spa
 };
 
 export const sendSpaceMessage = async (message: Omit<SpaceMessage, 'id' | 'created_at' | 'user'>) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    const newMessage = saveDemoMessage(message);
+    return demoSuccess(newMessage);
+  }
+  
   const { data, error } = await supabase
     .from('space_messages')
     .insert(message)
@@ -494,8 +651,164 @@ export const sendSpaceMessage = async (message: Omit<SpaceMessage, 'id' | 'creat
   return { data, error };
 };
 
+// Event functions
+export const createEvent = async (event: any) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    const newEvent = saveDemoEvent(event);
+    return demoSuccess(newEvent);
+  }
+  
+  const { data, error } = await supabase
+    .from('events')
+    .insert(event)
+    .select()
+    .single();
+  
+  return { data, error };
+};
+
+export const getEventForSpace = async (spaceId: string) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    return getDemoEventForSpace(spaceId);
+  }
+  
+  const { data, error } = await supabase
+    .from('events')
+    .select('*')
+    .eq('space_id', spaceId)
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+  
+  if (error) return null;
+  return data;
+};
+
+// Ticket functions
+export const createTicket = async (eventId: string, userId: string, paymentReference: string) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    const ticket = saveDemoTicket(eventId, paymentReference);
+    return demoSuccess(ticket);
+  }
+  
+  const { data, error } = await supabase
+    .from('tickets')
+    .insert({
+      event_id: eventId,
+      user_id: userId,
+      payment_reference: paymentReference,
+      status: 'active'
+    })
+    .select()
+    .single();
+  
+  return { data, error };
+};
+
+export const hasTicket = async (eventId: string, userId: string): Promise<boolean> => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    return hasDemoTicket(eventId);
+  }
+  
+  const { data } = await supabase
+    .from('tickets')
+    .select('*')
+    .eq('event_id', eventId)
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .single();
+  
+  return !!data;
+};
+
+// Vibes system
+export const getPredefinedVibes = () => PREDEFINED_VIBES;
+
+export const getUserVibes = async (userId: string): Promise<string[]> => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    return getDemoUserVibes();
+  }
+  
+  const { data, error } = await supabase
+    .from('user_vibes')
+    .select('vibe_id')
+    .eq('user_id', userId);
+  
+  if (error) return [];
+  return data?.map(d => d.vibe_id) || [];
+};
+
+export const followVibe = async (userId: string, vibeId: string) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    followDemoVibe(vibeId);
+    return { success: true };
+  }
+  
+  const { error } = await supabase
+    .from('user_vibes')
+    .insert({ user_id: userId, vibe_id: vibeId });
+  
+  return { success: !error };
+};
+
+export const unfollowVibe = async (userId: string, vibeId: string) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    unfollowDemoVibe(vibeId);
+    return { success: true };
+  }
+  
+  const { error } = await supabase
+    .from('user_vibes')
+    .delete()
+    .eq('user_id', userId)
+    .eq('vibe_id', vibeId);
+  
+  return { success: !error };
+};
+
+// User stats
+export const getUserStats = async (userId: string) => {
+  // DEMO MODE: Use localStorage
+  if (isDemoMode()) {
+    return getDemoStats();
+  }
+  
+  // Get user's drops count
+  const { data: drops, error: dropsError } = await supabase
+    .from('drops')
+    .select('id')
+    .eq('user_id', userId);
+  
+  // Get total feels received
+  const { data: engagement, error: engError } = await supabase
+    .from('post_engagement')
+    .select('feel_count')
+    .in('post_id', drops?.map(d => d.id) || []);
+  
+  const totalFeels = engagement?.reduce((sum, e) => sum + (e.feel_count || 0), 0) || 0;
+  
+  return {
+    dropsCreated: drops?.length || 0,
+    totalFeels,
+    reach: (drops?.length || 0) * 12 + totalFeels * 3
+  };
+};
+
 // Gamification functions
 export const addXP = async (userId: string, amount: number) => {
+  // DEMO MODE: Skip
+  if (isDemoMode()) {
+    return;
+  }
+  
   const { data: user } = await supabase
     .from('users')
     .select('xp, level')
@@ -517,6 +830,11 @@ export const addXP = async (userId: string, amount: number) => {
 };
 
 export const updateStreak = async (userId: string) => {
+  // DEMO MODE: Skip
+  if (isDemoMode()) {
+    return;
+  }
+  
   const { data: user } = await supabase
     .from('users')
     .select('streak, last_post_date')
@@ -552,6 +870,25 @@ export const updateStreak = async (userId: string) => {
 };
 
 export const getUserBadges = async (userId: string): Promise<UserBadge[]> => {
+  // DEMO MODE: Return demo badges
+  if (isDemoMode()) {
+    return [
+      {
+        id: 'demo-badge-1',
+        user_id: userId,
+        badge_id: 'early-bird',
+        earned_at: new Date().toISOString(),
+        badge: {
+          id: 'early-bird',
+          name: 'Early Bird',
+          description: 'Joined VIBE in demo mode',
+          icon: '🐦',
+          requirement: 'demo'
+        }
+      }
+    ];
+  }
+  
   const { data, error } = await supabase
     .from('user_badges')
     .select(`
@@ -570,6 +907,14 @@ export const getUserBadges = async (userId: string): Promise<UserBadge[]> => {
 
 // Search functions
 export const searchDrops = async (query: string, limit = 20): Promise<Drop[]> => {
+  // DEMO MODE: Search localStorage
+  if (isDemoMode()) {
+    const drops = getDemoDrops();
+    return drops.filter(d => 
+      d.content.toLowerCase().includes(query.toLowerCase())
+    ).slice(0, limit);
+  }
+  
   const { data, error } = await supabase
     .from('drops')
     .select(`
@@ -589,6 +934,11 @@ export const searchDrops = async (query: string, limit = 20): Promise<Drop[]> =>
 };
 
 export const searchUsers = async (query: string, limit = 20): Promise<User[]> => {
+  // DEMO MODE: Return empty
+  if (isDemoMode()) {
+    return [];
+  }
+  
   const { data, error } = await supabase
     .from('users')
     .select('*')
@@ -605,6 +955,15 @@ export const searchUsers = async (query: string, limit = 20): Promise<User[]> =>
 
 // Upload functions
 export const uploadImage = async (file: File, folder: string): Promise<string | null> => {
+  // DEMO MODE: Return data URL
+  if (isDemoMode()) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(file);
+    });
+  }
+  
   const fileExt = file.name.split('.').pop();
   const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`;
   const filePath = `${folder}/${fileName}`;

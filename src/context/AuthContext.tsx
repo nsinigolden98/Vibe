@@ -8,16 +8,21 @@ import {
   signInWithEmail,
   signUpWithEmail,
   signInWithGoogle,
-  signOut
+  signOut,
+  setDemoUser
 } from '@/services/supabaseClient';
+import { generateDemoUser, clearDemoData } from '@/services/demoStorage';
 
 interface AuthContextType {
   user: User | null;
   session: any;
   loading: boolean;
+  isDemoMode: boolean;
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
   signUp: (email: string, password: string) => Promise<{ error?: string; needsConfirmation?: boolean }>;
   signInWithGoogle: () => Promise<{ error?: string }>;
+  enterDemoMode: () => void;
+  exitDemoMode: () => void;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
@@ -25,10 +30,13 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// DEMO MODE: Uses demoStorage for persistence
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   const fetchUserProfile = useCallback(async (userId: string, email: string) => {
     let profile = await getUserProfile(userId);
@@ -110,13 +118,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { error: error?.message };
   };
 
+  // DEMO MODE: Enter demo mode
+  const enterDemoMode = () => {
+    const demoUser = generateDemoUser();
+    setUser(demoUser);
+    setDemoUser(demoUser);
+    setIsDemoMode(true);
+    setLoading(false);
+  };
+
+  // DEMO MODE: Exit demo mode
+  const exitDemoMode = () => {
+    clearDemoData();
+    setUser(null);
+    setDemoUser(null);
+    setIsDemoMode(false);
+  };
+
   const logout = async () => {
+    // DEMO MODE: If in demo mode, just clear the user
+    if (isDemoMode) {
+      exitDemoMode();
+      return;
+    }
     await signOut();
     setUser(null);
     setSession(null);
   };
 
   const refreshUser = async () => {
+    if (isDemoMode) {
+      // DEMO MODE: No need to refresh
+      return;
+    }
     if (session?.user) {
       await fetchUserProfile(session.user.id, session.user.email!);
     }
@@ -128,9 +162,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         session,
         loading,
+        isDemoMode,
         signIn,
         signUp,
         signInWithGoogle: handleGoogleSignIn,
+        enterDemoMode,
+        exitDemoMode,
         logout,
         refreshUser,
         isAuthenticated: !!user

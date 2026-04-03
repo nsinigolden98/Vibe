@@ -196,12 +196,15 @@ const DropCard: React.FC<DropCardProps> = ({
         <p className="text-white/90 whitespace-pre-wrap">{drop.content}</p>
         
         {drop.image_url && (
-          <div className="mt-3 rounded-xl overflow-hidden">
+          <div className="mt-3 rounded-xl overflow-hidden bg-black/20">
             <img 
               src={drop.image_url} 
               alt="Drop content" 
-              className="w-full max-h-96 object-cover"
+              className="w-full max-h-[500px] object-contain"
               loading="lazy"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
             />
           </div>
         )}

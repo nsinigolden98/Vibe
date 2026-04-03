@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Plus, BarChart2 } from 'lucide-react';
+import { Loader2, Plus, BarChart2, Image, X } from 'lucide-react';
 import type { Drop, User } from '@/types';
 import { getDrops, createPulse } from '@/services/supabaseClient';
 import PulseCard from '@/components/PulseCard';
@@ -7,6 +7,11 @@ import Modal from '@/components/Modal';
 import { soundManager } from '@/sounds/SoundManager';
 import { MOOD_COLORS, MOOD_EMOJIS } from '@/types';
 import type { Mood } from '@/types';
+
+interface PulseOption {
+  text: string;
+  imageUrl?: string;
+}
 
 interface PulseProps {
   currentUser: User | null;
@@ -19,9 +24,13 @@ const Pulse: React.FC<PulseProps> = ({ currentUser }) => {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [question, setQuestion] = useState('');
-  const [options, setOptions] = useState(['', '']);
+  const [options, setOptions] = useState<PulseOption[]>([
+    { text: '', imageUrl: '' },
+    { text: '', imageUrl: '' }
+  ]);
   const [selectedMood, setSelectedMood] = useState<Mood>('happy');
   const [creating, setCreating] = useState(false);
+  const [showImageInputs, setShowImageInputs] = useState(false);
 
   useEffect(() => {
     loadPulses();
@@ -42,7 +51,7 @@ const Pulse: React.FC<PulseProps> = ({ currentUser }) => {
 
   const handleAddOption = () => {
     if (options.length < 6) {
-      setOptions([...options, '']);
+      setOptions([...options, { text: '', imageUrl: '' }]);
       soundManager.playClick();
     }
   };
@@ -56,12 +65,25 @@ const Pulse: React.FC<PulseProps> = ({ currentUser }) => {
 
   const handleOptionChange = (index: number, value: string) => {
     const newOptions = [...options];
-    newOptions[index] = value;
+    newOptions[index] = { ...newOptions[index], text: value };
     setOptions(newOptions);
   };
 
+  const handleImageUrlChange = (index: number, value: string) => {
+    const newOptions = [...options];
+    newOptions[index] = { ...newOptions[index], imageUrl: value };
+    setOptions(newOptions);
+  };
+
+  const handleRemoveImage = (index: number) => {
+    const newOptions = [...options];
+    newOptions[index] = { ...newOptions[index], imageUrl: '' };
+    setOptions(newOptions);
+    soundManager.playClick();
+  };
+
   const handleCreatePulse = async () => {
-    if (!currentUser || !question.trim() || options.some(o => !o.trim())) return;
+    if (!currentUser || !question.trim() || options.some(o => !o.text.trim())) return;
 
     setCreating(true);
     try {
@@ -73,15 +95,19 @@ const Pulse: React.FC<PulseProps> = ({ currentUser }) => {
           category: 'pulse',
           ghost_mode: false
         },
-        options.filter(o => o.trim())
+        options.filter(o => o.text.trim()).map(o => o.text)
       );
 
       if (!error) {
         soundManager.playPost();
         setShowCreateModal(false);
         setQuestion('');
-        setOptions(['', '']);
+        setOptions([
+          { text: '', imageUrl: '' },
+          { text: '', imageUrl: '' }
+        ]);
         setSelectedMood('happy');
+        setShowImageInputs(false);
         await loadPulses();
       }
     } catch (err) {
@@ -192,24 +218,75 @@ const Pulse: React.FC<PulseProps> = ({ currentUser }) => {
 
           {/* Options */}
           <div>
-            <label className="block text-sm text-white/70 mb-2">Options</label>
-            <div className="space-y-2">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm text-white/70">Options</label>
+              <button
+                onClick={() => {
+                  setShowImageInputs(!showImageInputs);
+                  soundManager.playClick();
+                }}
+                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors ${
+                  showImageInputs 
+                    ? 'bg-[#ff2e2e]/20 text-[#ff2e2e]' 
+                    : 'bg-white/10 text-white/60 hover:bg-white/20'
+                }`}
+              >
+                <Image className="w-3 h-3" />
+                {showImageInputs ? 'Hide Images' : 'Add Images'}
+              </button>
+            </div>
+            <div className="space-y-3">
               {options.map((option, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={option}
-                    onChange={(e) => handleOptionChange(index, e.target.value)}
-                    placeholder={`Option ${index + 1}`}
-                    className="flex-1 bg-white/10 border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-white/40 focus:outline-none focus:border-[#ff2e2e]/50"
-                  />
-                  {options.length > 2 && (
-                    <button
-                      onClick={() => handleRemoveOption(index)}
-                      className="p-2.5 hover:bg-white/10 rounded-xl text-white/50 transition-colors"
-                    >
-                      ×
-                    </button>
+                <div key={index} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={option.text}
+                      onChange={(e) => handleOptionChange(index, e.target.value)}
+                      placeholder={`Option ${index + 1}`}
+                      className="flex-1 bg-white/10 border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-white/40 focus:outline-none focus:border-[#ff2e2e]/50"
+                    />
+                    {options.length > 2 && (
+                      <button
+                        onClick={() => handleRemoveOption(index)}
+                        className="p-2.5 hover:bg-white/10 rounded-xl text-white/50 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                  {showImageInputs && (
+                    <div className="flex items-center gap-2 pl-2">
+                      {option.imageUrl ? (
+                        <div className="relative flex-1">
+                          <img 
+                            src={option.imageUrl} 
+                            alt={`Option ${index + 1}`}
+                            className="w-full h-24 object-cover rounded-xl"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = 'none';
+                            }}
+                          />
+                          <button
+                            onClick={() => handleRemoveImage(index)}
+                            className="absolute top-2 right-2 p-1 bg-black/60 hover:bg-black/80 rounded-full text-white transition-colors"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex-1 flex items-center gap-2">
+                          <Image className="w-4 h-4 text-white/40" />
+                          <input
+                            type="text"
+                            value={option.imageUrl || ''}
+                            onChange={(e) => handleImageUrlChange(index, e.target.value)}
+                            placeholder="Image URL (optional)"
+                            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-[#ff2e2e]/50"
+                          />
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}
@@ -217,7 +294,7 @@ const Pulse: React.FC<PulseProps> = ({ currentUser }) => {
             {options.length < 6 && (
               <button
                 onClick={handleAddOption}
-                className="mt-2 flex items-center gap-1 text-sm text-[#ff2e2e] hover:text-[#ff2e2e]/80 transition-colors"
+                className="mt-3 flex items-center gap-1 text-sm text-[#ff2e2e] hover:text-[#ff2e2e]/80 transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 Add option
@@ -228,7 +305,7 @@ const Pulse: React.FC<PulseProps> = ({ currentUser }) => {
           {/* Submit */}
           <button
             onClick={handleCreatePulse}
-            disabled={!question.trim() || options.some(o => !o.trim()) || creating}
+            disabled={!question.trim() || options.some(o => !o.text.trim()) || creating}
             className="w-full py-3 bg-[#ff2e2e] hover:bg-[#ff2e2e]/80 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
           >
             {creating ? (

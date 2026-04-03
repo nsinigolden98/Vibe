@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Settings, Crown, Zap, Flame, Award, Users, UserPlus, LogOut, Edit3, Palette, Volume2, VolumeX } from 'lucide-react';
+import { Loader2, Settings, Crown, Zap, Flame, Award, Users, UserPlus, LogOut, Edit3, Palette, Volume2, VolumeX, FileText, Shield, BarChart2, MessageSquare, ChevronRight } from 'lucide-react';
 import type { User, Drop, Badge } from '@/types';
 import { getUserDrops, getVibing, getVibers, getUserBadges, updateUserProfile, signOut } from '@/services/supabaseClient';
+import { getDemoDrops, getDemoPulses, getDemoSpaces } from '@/services/demoStorage';
 import { soundManager } from '@/sounds/SoundManager';
 import DropCard from '@/components/DropCard';
 import Modal from '@/components/Modal';
 import PremiumModal from '@/components/PremiumModal';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import { isDemoMode } from '@/services/demoStorage';
 
 interface AuraProps {
   currentUser: User | null;
@@ -15,8 +17,10 @@ interface AuraProps {
 
 const Aura: React.FC<AuraProps> = ({ currentUser, onUpdate }) => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'drops' | 'vibing' | 'vibers' | 'badges'>('drops');
+  const [activeTab, setActiveTab] = useState<'drops' | 'pulses' | 'spaces' | 'vibing' | 'vibers' | 'badges'>('drops');
   const [drops, setDrops] = useState<Drop[]>([]);
+  const [pulses, setPulses] = useState<any[]>([]);
+  const [spaces, setSpaces] = useState<any[]>([]);
   const [vibing, setVibing] = useState<User[]>([]);
   const [vibers, setVibers] = useState<User[]>([]);
   const [badges, setBadges] = useState<any[]>([]);
@@ -25,6 +29,8 @@ const Aura: React.FC<AuraProps> = ({ currentUser, onUpdate }) => {
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [selectedDrop, setSelectedDrop] = useState<Drop | null>(null);
   const [showEchoModal, setShowEchoModal] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
 
   const gradients = [
     'from-purple-500 to-pink-500',
@@ -50,23 +56,41 @@ const Aura: React.FC<AuraProps> = ({ currentUser, onUpdate }) => {
     
     setLoading(true);
     try {
-      switch (activeTab) {
-        case 'drops':
-          const userDrops = await getUserDrops(currentUser.id);
-          setDrops(userDrops);
-          break;
-        case 'vibing':
-          const vibingList = await getVibing(currentUser.id);
-          setVibing(vibingList);
-          break;
-        case 'vibers':
-          const vibersList = await getVibers(currentUser.id);
-          setVibers(vibersList);
-          break;
-        case 'badges':
-          const userBadges = await getUserBadges(currentUser.id);
-          setBadges(userBadges);
-          break;
+      if (isDemoMode()) {
+        // Demo mode: use localStorage
+        const demoDrops = getDemoDrops().filter(d => d.user.id === currentUser.id);
+        const demoPulses = getDemoPulses().filter((p: any) => p.user?.id === currentUser.id);
+        const demoSpaces = getDemoSpaces().filter((s: any) => s.user?.id === currentUser.id);
+        setDrops(demoDrops);
+        setPulses(demoPulses);
+        setSpaces(demoSpaces);
+      } else {
+        switch (activeTab) {
+          case 'drops':
+            const userDrops = await getUserDrops(currentUser.id);
+            setDrops(userDrops);
+            break;
+          case 'pulses':
+            const allPulses = await getDemoPulses();
+            setPulses(allPulses.filter((p: any) => p.user?.id === currentUser.id));
+            break;
+          case 'spaces':
+            const allSpaces = await getDemoSpaces();
+            setSpaces(allSpaces.filter((s: any) => s.user?.id === currentUser.id));
+            break;
+          case 'vibing':
+            const vibingList = await getVibing(currentUser.id);
+            setVibing(vibingList);
+            break;
+          case 'vibers':
+            const vibersList = await getVibers(currentUser.id);
+            setVibers(vibersList);
+            break;
+          case 'badges':
+            const userBadges = await getUserBadges(currentUser.id);
+            setBadges(userBadges);
+            break;
+        }
       }
     } catch (error) {
       console.error('Error loading aura data:', error);
@@ -194,15 +218,15 @@ const Aura: React.FC<AuraProps> = ({ currentUser, onUpdate }) => {
 
       {/* Tabs */}
       <div className="sticky top-0 z-30 bg-gray-900/95 backdrop-blur-lg border-b border-white/10 px-4">
-        <div className="flex gap-6">
-          {(['drops', 'vibing', 'vibers', 'badges'] as const).map((tab) => (
+        <div className="flex gap-4 overflow-x-auto scrollbar-hide">
+          {(['drops', 'pulses', 'spaces', 'vibing', 'vibers', 'badges'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => {
                 setActiveTab(tab);
                 soundManager.playClick();
               }}
-              className={`relative py-3 text-sm font-medium capitalize transition-colors ${
+              className={`relative py-3 text-sm font-medium capitalize transition-colors whitespace-nowrap ${
                 activeTab === tab ? 'text-white' : 'text-white/50'
               }`}
             >
@@ -243,6 +267,62 @@ const Aura: React.FC<AuraProps> = ({ currentUser, onUpdate }) => {
                     onView={() => {}}
                   />
                 ))
+              )
+            )}
+
+            {activeTab === 'pulses' && (
+              pulses.length === 0 ? (
+                <div className="text-center py-12">
+                  <BarChart2 className="w-12 h-12 mx-auto text-white/30 mb-3" />
+                  <p className="text-white/50">No pulses yet</p>
+                  <Link to="/pulse" className="text-[#ff2e2e] text-sm mt-2 inline-block hover:underline">
+                    Create your first pulse →
+                  </Link>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {pulses.map((pulse) => (
+                    <Link key={pulse.id} to="/pulse" className="block">
+                      <div className="p-4 bg-white/5 rounded-xl hover:bg-white/10 transition-colors">
+                        <p className="text-white font-medium mb-2">{pulse.content}</p>
+                        <div className="flex items-center gap-4 text-sm text-white/50">
+                          <span>{pulse.options?.length || 0} options</span>
+                          <span>•</span>
+                          <span>{pulse.vote_count || 0} votes</span>
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )
+            )}
+
+            {activeTab === 'spaces' && (
+              spaces.length === 0 ? (
+                <div className="text-center py-12">
+                  <MessageSquare className="w-12 h-12 mx-auto text-white/30 mb-3" />
+                  <p className="text-white/50">No spaces yet</p>
+                  <Link to="/spaces" className="text-[#ff2e2e] text-sm mt-2 inline-block hover:underline">
+                    Create your first space →
+                  </Link>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {spaces.map((space) => (
+                    <Link key={space.id} to="/spaces" className="block">
+                      <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-colors">
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#ff2e2e] to-purple-500 flex items-center justify-center">
+                          <span className="text-white font-bold">{space.name?.charAt(0)}</span>
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-medium text-white">{space.name}</p>
+                          <p className="text-xs text-white/50">{space.member_count || 0} members</p>
+                        </div>
+                        <ChevronRight className="w-5 h-5 text-white/40" />
+                      </div>
+                    </Link>
+                  ))}
+                </div>
               )
             )}
 
@@ -401,6 +481,30 @@ const Aura: React.FC<AuraProps> = ({ currentUser, onUpdate }) => {
             </button>
           )}
 
+          {/* Legal Links */}
+          <div className="border-t border-white/10 pt-4">
+            <h3 className="text-sm font-medium text-white mb-3 flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              Legal
+            </h3>
+            <div className="space-y-2">
+              <button
+                onClick={() => setShowTerms(true)}
+                className="w-full flex items-center justify-between p-3 bg-white/5 hover:bg-white/10 rounded-xl transition-colors text-left"
+              >
+                <span className="text-white/80">Terms of Service</span>
+                <ChevronRight className="w-4 h-4 text-white/40" />
+              </button>
+              <button
+                onClick={() => setShowPrivacy(true)}
+                className="w-full flex items-center justify-between p-3 bg-white/5 hover:bg-white/10 rounded-xl transition-colors text-left"
+              >
+                <span className="text-white/80">Privacy Policy</span>
+                <ChevronRight className="w-4 h-4 text-white/40" />
+              </button>
+            </div>
+          </div>
+
           {/* Logout */}
           <button
             onClick={handleLogout}
@@ -409,6 +513,66 @@ const Aura: React.FC<AuraProps> = ({ currentUser, onUpdate }) => {
             <LogOut className="w-5 h-5" />
             Log Out
           </button>
+        </div>
+      </Modal>
+
+      {/* Terms Modal */}
+      <Modal
+        isOpen={showTerms}
+        onClose={() => setShowTerms(false)}
+        title="Terms of Service"
+        size="lg"
+      >
+        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+          <div className="prose prose-invert prose-sm">
+            <h3 className="text-white font-semibold">1. Acceptance of Terms</h3>
+            <p className="text-white/70">By accessing or using VIBE, you agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use our platform.</p>
+            
+            <h3 className="text-white font-semibold mt-4">2. User Conduct</h3>
+            <p className="text-white/70">You agree to use VIBE in a manner consistent with all applicable laws and regulations. You are solely responsible for your conduct and any content you post.</p>
+            
+            <h3 className="text-white font-semibold mt-4">3. Anonymous Expression</h3>
+            <p className="text-white/70">VIBE is designed for anonymous expression. While we protect your identity, you remain responsible for the content you share. Harassment, hate speech, and illegal content are strictly prohibited.</p>
+            
+            <h3 className="text-white font-semibold mt-4">4. Content Ownership</h3>
+            <p className="text-white/70">You retain ownership of content you create on VIBE. By posting, you grant us a license to display and distribute your content within the platform.</p>
+            
+            <h3 className="text-white font-semibold mt-4">5. Termination</h3>
+            <p className="text-white/70">We reserve the right to suspend or terminate accounts that violate these terms or engage in harmful behavior.</p>
+            
+            <h3 className="text-white font-semibold mt-4">6. Changes to Terms</h3>
+            <p className="text-white/70">We may update these terms from time to time. Continued use of VIBE after changes constitutes acceptance of the new terms.</p>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Privacy Modal */}
+      <Modal
+        isOpen={showPrivacy}
+        onClose={() => setShowPrivacy(false)}
+        title="Privacy Policy"
+        size="lg"
+      >
+        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+          <div className="prose prose-invert prose-sm">
+            <h3 className="text-white font-semibold">1. Information We Collect</h3>
+            <p className="text-white/70">We collect minimal information to provide our services: username, email (for authentication), and content you choose to share. We do not require real names or personal identifiers.</p>
+            
+            <h3 className="text-white font-semibold mt-4">2. Anonymous By Design</h3>
+            <p className="text-white/70">VIBE is built for anonymity. Your posts are not linked to your real identity. Even we cannot trace content back to individual users beyond the username you choose.</p>
+            
+            <h3 className="text-white font-semibold mt-4">3. Data Storage</h3>
+            <p className="text-white/70">Your data is stored securely. Temporary content (like Void Wall posts) is automatically deleted after 24 hours. You can delete your account and associated data at any time.</p>
+            
+            <h3 className="text-white font-semibold mt-4">4. Third Parties</h3>
+            <p className="text-white/70">We do not sell your data to third parties. Limited data may be shared with service providers necessary to operate the platform (hosting, analytics).</p>
+            
+            <h3 className="text-white font-semibold mt-4">5. Cookies</h3>
+            <p className="text-white/70">We use minimal cookies for session management and preferences. You can disable cookies, but some features may not function properly.</p>
+            
+            <h3 className="text-white font-semibold mt-4">6. Your Rights</h3>
+            <p className="text-white/70">You have the right to access, modify, or delete your personal data. Contact us for data-related requests.</p>
+          </div>
         </div>
       </Modal>
 

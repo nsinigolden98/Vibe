@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, BarChart2, MessageSquare, User as UserIcon, Search, Plus, Crown, Bell } from 'lucide-react';
+import { Home, BarChart2, MessageSquare, User as UserIcon, Search, Plus, Crown, Bell, Menu } from 'lucide-react';
 import type { User } from '@/types';
 import PremiumModal from './PremiumModal';
+import SideDrawer from './SideDrawer';
 import { soundManager } from '@/sounds/SoundManager';
+import { useAuth } from '@/context/AuthContext';
 
 interface NavbarProps {
   currentUser: User | null;
@@ -14,6 +16,8 @@ interface NavbarProps {
 const Navbar: React.FC<NavbarProps> = ({ currentUser, onCreateDrop, onUpgrade }) => {
   const location = useLocation();
   const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [showSideDrawer, setShowSideDrawer] = useState(false);
+  const { logout } = useAuth();
 
   const navItems = [
     { path: '/', icon: Home, label: 'Stream' },
@@ -44,13 +48,22 @@ const Navbar: React.FC<NavbarProps> = ({ currentUser, onCreateDrop, onUpgrade })
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex flex-col fixed left-0 top-0 h-full w-64 bg-gray-900/95 backdrop-blur-lg border-r border-white/10 z-40">
         {/* Logo */}
-        <div className="p-6">
+        <div className="p-6 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2" onClick={handleNavClick}>
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#ff2e2e] to-[#ff6b35] flex items-center justify-center">
               <span className="text-white font-bold text-xl">V</span>
             </div>
             <span className="text-2xl font-bold text-white">VIBE</span>
           </Link>
+          <button 
+            onClick={() => {
+              setShowSideDrawer(true);
+              soundManager.playClick();
+            }}
+            className="p-2 hover:bg-white/10 rounded-full transition-colors"
+          >
+            <Menu className="w-5 h-5 text-white/60" />
+          </button>
         </div>
 
         {/* Create Drop Button */}
@@ -124,6 +137,27 @@ const Navbar: React.FC<NavbarProps> = ({ currentUser, onCreateDrop, onUpgrade })
         )}
       </aside>
 
+      {/* Mobile Header */}
+      <div className="lg:hidden fixed top-0 left-0 right-0 bg-gray-900/95 backdrop-blur-lg border-b border-white/10 z-40 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <Link to="/" className="flex items-center gap-2" onClick={handleNavClick}>
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#ff2e2e] to-[#ff6b35] flex items-center justify-center">
+              <span className="text-white font-bold text-lg">V</span>
+            </div>
+            <span className="text-xl font-bold text-white">VIBE</span>
+          </Link>
+          <button 
+            onClick={() => {
+              setShowSideDrawer(true);
+              soundManager.playClick();
+            }}
+            className="p-2 hover:bg-white/10 rounded-full transition-colors"
+          >
+            <Menu className="w-5 h-5 text-white" />
+          </button>
+        </div>
+      </div>
+
       {/* Mobile Bottom Nav */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-gray-900/95 backdrop-blur-lg border-t border-white/10 z-40 safe-area-pb">
         <div className="flex items-center justify-around px-2 py-2">
@@ -159,6 +193,14 @@ const Navbar: React.FC<NavbarProps> = ({ currentUser, onCreateDrop, onUpgrade })
         onClose={() => setShowPremiumModal(false)}
         currentUser={currentUser}
         onUpgrade={onUpgrade}
+      />
+
+      {/* Side Drawer */}
+      <SideDrawer
+        isOpen={showSideDrawer}
+        onClose={() => setShowSideDrawer(false)}
+        currentUser={currentUser}
+        onLogout={logout}
       />
     </>
   );
